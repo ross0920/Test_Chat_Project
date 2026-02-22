@@ -30,7 +30,10 @@ enum class message_type : uint8_t {
 	send_id = 21,
 	send_udp_port = 22,
 	start_vc= 23,
-	bad_message = 24
+	mic_test = 24,
+	end_vc = 25,
+	end_chat = 26,
+	bad_message = 27
 };
 
 
@@ -88,7 +91,7 @@ public:
 		catch (const std::invalid_argument& e) {
 		std::cout << " std::stoi(std::string(header + 2, 4))\n";
 			std::string text = "bad";
-			body_length_ = 3;//was 3 dunno why
+			body_length_ = 3;
 			std::memcpy(body(), text.c_str(), body_length());
 			return false;
 		}

@@ -67,12 +67,9 @@ target_link_libraries(Test_Chat_Client PRIVATE
 	"${GLOBAL_INCLUDE_DIR}/openssl/lib/VC/x64/MTd/libssl_static.lib"
 	"${GLOBAL_INCLUDE_DIR}/openssl/lib/VC/x64/MTd/libcrypto_static.lib"
 	$<IF:$<CONFIG:Debug>,${OPUS_DEBUG_LIB}, ${OPUS_RELEASE_LIB}>
+	${GLOBAL_INCLUDE_DIR}/glfw/glfw3.lib
 	Ws2_32.lib
 	Crypt32.lib 
-)
-target_link_libraries(Test_Chat_Client PRIVATE
-	${GLOBAL_INCLUDE_DIR}/glfw/glfw3.lib
-	#kissfft
 )
 
 

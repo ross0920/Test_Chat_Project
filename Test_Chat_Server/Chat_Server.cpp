@@ -26,6 +26,9 @@
 #include <boost/archive/iterators/base64_from_binary.hpp>
 #include <boost/archive/iterators/transform_width.hpp>
 #include <boost/archive/iterators/binary_from_base64.hpp>
+#include <ssl/include/openssl/ssl.h>
+#include <ssl/include/openssl/err.h>
+
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
@@ -58,7 +61,7 @@ uint8_t generate_id() {
 	if (!free_ids.empty()) {
 		uint8_t id = free_ids.front();
 		free_ids.pop();
-		std::cout << "returning free_id " << id << "\n";
+		std::cout << "returning free_id " << static_cast<int>(id) << "\n";
 		return id;
 	}
 	if (next_id >= 254) {
@@ -72,6 +75,7 @@ uint8_t generate_id() {
 	}
 }
 void release_id(uint8_t id) {
+	std::cout << "release id " << static_cast<int>(id) << "\n";
 	free_ids.push(id);
 }
 class id_generator {
@@ -83,7 +87,7 @@ public:
 		if (!free_ids.empty()) {
 			uint8_t id = free_ids.front();
 			free_ids.pop();
-			std::cout << "returning free_id " << id << "\n";
+			std::cout << "returning free_id " << static_cast<int>(id) << "\n";
 			return id;
 		}
 		if (next_id >= 254) {
@@ -97,121 +101,161 @@ public:
 		}
 	}
 	void release_id(uint8_t id) {
+		std::cout << "releasing id " << static_cast<int>(id) << "\n";
 		free_ids.push(id);
 	}
 };
+
+SSL_CTX* create_context()
+{
+	const SSL_METHOD* method;
+	SSL_CTX* ctx;
+
+	method = TLS_server_method();
+
+	ctx = SSL_CTX_new(method);
+	if (!ctx) {
+		perror("Unable to create SSL context");
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+
+	return ctx;
+}
+
+void configure_context(SSL_CTX* ctx)
+{
+	/* Set the key and cert */
+	if (SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0) {
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+
+	if (SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0) {
+		ERR_print_errors_fp(stderr);
+		exit(EXIT_FAILURE);
+	}
+}
+
 class voice_chat_room;
 class voice_chat_room : public std::enable_shared_from_this<voice_chat_room> {
 public:
 	voice_chat_room(std::shared_ptr<udp::socket> udp_socket, udp::endpoint& udp_endpoint,
-		boost::asio::io_context& io_context)
+		boost::asio::io_context& io_context, uint8_t room_id)
 		:
 		udp_socket_(udp_socket), udp_endpoint_(udp_endpoint),
-		io_context_(io_context)
+		io_context_(io_context), timer_{ boost::asio::steady_timer(io_context_, boost::asio::chrono::milliseconds(1))},
+		room_id_(room_id)
+	{}
+	void join_room(chat_participant_ptr participant_)
 	{
-		ma_result result = ma_rb_init(packet_size * packet_count, NULL, NULL, &ring_buffer_);
-		if (result != MA_SUCCESS) {
-			std::cerr << "rb fail init\n";
-			return;
+		add_participant(participant_);
+		participant_->set_vc_room_id(room_id_);
+		participant_->set_vc_room_id(room_id_);
+		participant_->start_read_vc_rb();
+		participant_->start_read_vc_rb();
+	}
+	void leave_room(chat_participant_ptr participant_) {
+		remove_participant(participant_);
+		participant_->set_vc_room_id(0);
+		participant_->stop_read_vc_rb();
+	}
+	void get_participant_ids(uint8_t* ids, uint8_t& count) {
+		count = 0;
+		auto iter = participants_.begin();
+		uint8_t id_size = sizeof(chat_participant::id);
+		for (; iter != participants_.end() && count < max_participants; ++iter) {
+			uint8_t id = iter->second->id;
+			std::memcpy(ids + count * id_size, &id, id_size);
+			++count;
 		}
-		//start_dispatch();
 	}
 	void add_participant(chat_participant_ptr participant_) {
-		if (participants_.find(participant_->id) != participants_.end() || participants_.size() > max_participants) { return; }
+		std::cout << "try add vc participant\n";
+		if (participants_.find(participant_->id) != participants_.end() || participants_.size() > max_participants || participant_->get_vc_room_id()) { 
+			std::cout << "fail add vc participant with room id " << static_cast<int>(participant_->get_vc_room_id()) << " to vc room " << static_cast<int>(room_id_) << "\n";
+
+			return; }
+		std::cout << "add participant " << static_cast<int>(participant_->id) << " to vc room " << static_cast<int>(room_id_) << "\n";
 		participants_.emplace(participant_->id, participant_);
 	}
 	void remove_participant(chat_participant_ptr participant_) {
 		participants_.erase(participant_->id);
+		std::cout << "erase participant_ " << participant_->name << " " << static_cast<int>(participant_->id) << " " << " from vc_room " << static_cast<int>(room_id_) << "\n";
 	}
-	void write_to_buffer(uint8_t* recv_, size_t bytes_transferred_) {
-		void* pwrite_void = nullptr;
-		size_t write_size = bytes_transferred_;
+	void route_vc_msg_to_sender(std::shared_ptr<voice_chat_message> recv_vc_msg_) {
+		//std::cout << "routing msg to sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
+		//TODO verify participant not removed. this seg faults when they leave currently
 
-		ma_result result = ma_rb_acquire_write(&ring_buffer_, &write_size, &pwrite_void);
-		if (result == MA_SUCCESS && write_size <= bytes_transferred_) {
-			memcpy(pwrite_void, recv_, write_size);
-			ma_rb_commit_write(&ring_buffer_, write_size);
+		if (participants_[recv_vc_msg_->sender_id]->get_vc_room_id() == 0) { 	
+			//invalid sender. tcp server handles clean up
+			std::cout << "vc room is 0\n";
+			return; 
 		}
-		else {
-			return;
-		}
+		participants_[recv_vc_msg_->sender_id]->write_vc_msg_to_rb(recv_vc_msg_);
 	}
-	void deliver(const uint8_t* recv_, uint8_t room_id_, uint8_t sender_id_, uint16_t len_) {
-		std::unordered_map<uint8_t, chat_participant_ptr>::iterator it =
-			participants_.begin();
-		for (; it != participants_.end(); ++it) {
-			if (sender_id_ != it->second->id) {
-				it->second->deliver(recv_, sender_id_, len_);
-			}
-		}
-	}
-	void start_dispatch() {
+	void send_message_to_playback(std::shared_ptr<voice_chat_message> recv_vc_msg_, uint8_t& sender_id) {
 		auto self = shared_from_this();
-		boost::asio::post(io_context_, [this, self]() {dispatch_loop(); });
-	}
-	void dispatch_loop() {
-		void* pread_void = nullptr;
-		size_t read_size = 0;
-		while (true) {
-			read_size = packet_size * packet_count;
-			if (ma_rb_acquire_read(&ring_buffer_, &read_size, &pread_void) !=
-				MA_SUCCESS) {
-				break;
-			}
-			if (read_size < sizeof(uint8_t) * 2 + sizeof(uint16_t)) {
-				boost::this_thread::sleep_for(boost::chrono::milliseconds(1));
-				std::cout << "yield\n";
-				continue;
-			}
-			std::cout << "don't yield\n";
-			uint8_t room_id = 0;
-			uint8_t sender_id = 0;
-			uint16_t len = 0;
-			std::memcpy(&room_id, pread_void, sizeof(room_id));
-			std::memcpy(&sender_id, static_cast<uint8_t*>(pread_void) + sizeof(uint8_t), sizeof(sender_id));
-			std::memcpy(&len, static_cast<uint8_t*>(pread_void) + sizeof(uint8_t) + sizeof(uint8_t), sizeof(len));
-			deliver(static_cast<uint8_t*>(pread_void), room_id, sender_id, len);
-			ma_rb_commit_read(&ring_buffer_, read_size);
+		auto iter = participants_.begin();
+		for (; iter != participants_.end(); ++iter) {
+			auto msg_copy = std::make_shared<voice_chat_message>(*recv_vc_msg_);
+			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
+			size_t size = msg_copy->length();
+			//std::cout << "write to client " << iter->second->name << "\n";
+			if (iter->second->id == msg_copy->sender_id && !iter->second->get_feedback_option()) { 
+				//std::cout << "skip send same name\n";
+				continue; }
+			//std::cout << "do async send\n";
+			udp_socket_->async_send_to(buffer, *iter->second->get_client_udp_endpoint(),
+				[this, self, size, iter, msg_copy](boost::system::error_code ec, std::size_t bytes) {
+					if (ec) {
+						//std::cout << "write to client [" << iter->second->id << "][" << iter->second->name << "] fail\n";
+					}
+					else {
+						/*std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
+							<< " write to client size [" << size << "]\n\t" 
+							<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";*/
+					}
+				}
+			);
+			//std::cout << "async send complete\n";
 		}
+		//don't want to commit read for every person, but need to only commit after all sends have completed??
+		//std::cout << "get sender\n";
+		//std::cout << "at id " << static_cast<int>(sender_id) << "\n";
+		auto sender = participants_[sender_id];
+		//std::cout << "commit read of size " << recv_vc_msg_->body_length() << "\n";
+		//std::cout << "send to " << sender->name << "\n";
+		sender->commit_read_rb(recv_vc_msg_->body_length());
+		//std::cout << "call read_vc_rb()\n";
+		// duplicate call? already posting call to read_vc_rb within that method
+		//sender->read_vc_rb();
+		//std::cout << "call sender->read_vc_rb()\n";
+		//adsfsdf
 	}
-	void enqueue_ring(const uint8_t* recv_, uint8_t sender_id_, uint16_t len_) {
-		void* pwrite_void = nullptr;
-		size_t write_size = len_;
-		ma_result result = ma_rb_acquire_write(&ring_buffer_, &write_size, &pwrite_void);
-		if (result != MA_SUCCESS || write_size < len_) {
-			return;
-		}
-		uint8_t* pwrite = static_cast<uint8_t*>(pwrite_void);
-		std::memcpy(pwrite, recv_, len_);
-
-		result = ma_rb_commit_write(&ring_buffer_, len_);
-	}
-
+	uint8_t room_id_;
 	std::shared_ptr<udp::socket> udp_socket_;
 	udp::endpoint& udp_endpoint_;
 	udp::endpoint udp_remote_endpoint_;
-	ma_rb ring_buffer_;
 	std::unordered_map<uint8_t, chat_participant_ptr> participants_; //thread safety mutex/strand
 	boost::asio::io_context& io_context_;
+	boost::asio::steady_timer timer_;
 };
 
 class chat_room : public std::enable_shared_from_this<chat_room> {
 public:
 	chat_room(std::shared_ptr<udp::socket>udp_socket, udp::endpoint& udp_endpoint, boost::asio::io_context& io_context): 
 		udp_socket_{ std::move(udp_socket) }, udp_endpoint_{ udp_endpoint }, io_context_{ io_context } {
-		ma_result result = ma_rb_init(packet_size * packet_count, NULL, NULL, &ring_buffer_);
-		if (result != MA_SUCCESS) {
-			std::cerr << "rb fail init\n";
-			return;
-		}
 	}
 	boost::asio::io_context& io_context_;
 	chat_message_queue recent_msgs_;
 	std::unordered_map<uint8_t, chat_participant_ptr> participant_map;
+	std::unordered_map<uint8_t, std::shared_ptr<voice_chat_room>> vc_rooms;
 	std::unordered_map<uint8_t, std::string> tokens;
-	bool route_udp(uint8_t vc_room_id_, uint8_t* recv_, size_t bytes_transferred_) {
+	bool route_udp(uint8_t vc_room_id_, std::shared_ptr<voice_chat_message> recv_vc_msg_) {
 		if (vc_rooms.find(vc_room_id_) != vc_rooms.end()) {
-			vc_rooms.at(vc_room_id_)->write_to_buffer(recv_, bytes_transferred_);
+			//std::cout << "routing message to vc_room_id_[" << static_cast<int>(vc_room_id_) << "]\n";
+			vc_rooms.at(vc_room_id_)->route_vc_msg_to_sender(recv_vc_msg_);
 			return true;
 		}
 		return false;
@@ -220,14 +264,17 @@ public:
 		auto it = tokens.find(sender_id_);
 		if (tokens.find(sender_id_) != tokens.end() && token_.size() == voice_chat_message::token_length &&
 			it->second == token_) {
+			//std::cout << "token[" << static_cast<int>(sender_id_) << "] = " << tokens[sender_id_] << "\n";
 			return true;
 		}
 		return false;
 	}
 	void join(chat_participant_ptr participant) {
+		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " join room\n";
 		if (duplicate_id(participant->id) || participant_map.size() >= max_participants) {
 			return; }
 		participant->id = generate_id();
+		std::cout << "generate_id -> " << static_cast<int>(participant->id) << "\n";
 		participant_map.insert(std::make_pair(
 			participant->id, participant));
 		tokens.insert(std::make_pair(participant->id, participant->session_token));
@@ -242,7 +289,88 @@ public:
 			participant->deliver(msg);
 		}
 	}
+	void send_vc_leave_notification(chat_participant_ptr participant) {
+		uint8_t vc_room_id = participant->get_vc_room_id();
+		auto iter = vc_rooms.find(vc_room_id);
+		if (iter == vc_rooms.end()) { return; }
+		uint8_t ids[max_participants];
+		uint8_t count;
+		vc_rooms.at(vc_room_id)->get_participant_ids(ids, count);
+		chat_message msg;
+		uint8_t sender_id = participant->id;
+		msg.set_message_type(message_type::end_vc);
+		std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
+		std::memcpy(msg.body() + sizeof(sender_id), &count, sizeof(count));
+		std::memcpy(msg.body() + sizeof(sender_id) + sizeof(count), ids, count);
+		msg.body_length(sizeof(sender_id) + sizeof(count) + count);
+		msg.encode_header();
+		participant->deliver(msg);
+	}
+	//TODO use function pointer to combine this with send room leave notification
+	void send_vc_leave_notifications(chat_participant_ptr participant) {
+		uint8_t vc_room_id = participant->get_vc_room_id();
+		auto iter = vc_rooms.find(vc_room_id);
+		if (iter == vc_rooms.end()) { return; }
+		auto p = vc_rooms.at(vc_room_id)->participants_.begin();
+		for (; p != vc_rooms.at(vc_room_id)->participants_.end(); ++p) {
+			chat_message msg;
+			uint8_t sender_id = participant->id;
+			msg.set_message_type(message_type::end_vc);
+			std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
+			msg.body_length(sizeof(sender_id));
+			msg.encode_header();
+			participant->deliver(msg);
+		}
+	}
+
+	void send_room_leave_notifications(chat_participant_ptr participant) {
+		auto iter = participant_map.find(participant->id);
+		if (iter == participant_map.end()) { return; }
+		auto p = participant_map.begin();
+		for (; p != participant_map.end(); ++p) {
+			chat_message msg;
+			uint8_t sender_id = participant->id;
+			msg.set_message_type(message_type::end_chat);
+			std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
+			msg.body_length(sizeof(sender_id));
+			msg.encode_header();
+			participant->deliver(msg);
+		}
+	}
+
+	void leave_vc_room(chat_participant_ptr participant) {
+		send_vc_leave_notifications(participant);
+		uint8_t vc_room_id = participant->get_vc_room_id();
+		std::cout << "leave room vc_room_id = " << static_cast<int>(vc_room_id) << "\n";
+		uint8_t left_vc_room = 0;
+		if (vc_room_id) {
+			std::cout << "search for room\n";
+			auto iter = vc_rooms.find(vc_room_id);
+			if (iter != vc_rooms.end()) {
+				vc_rooms.at(vc_room_id)->leave_room(participant);
+				std::cout << "participant " << participant->name << " " << static_cast<int>(participant->id) << " removed from vc room " << static_cast<int>(vc_room_id) << "\n";
+
+				if (vc_rooms.at(vc_room_id)->participants_.size() == 0) {
+					vc_rooms.erase(vc_room_id);
+					vc_room_id_gen.release_id(vc_room_id);
+				}
+			}
+			std::cout << "end search\n";
+		}
+	}
 	void leave(chat_participant_ptr participant) {
+		leave_vc_room(participant);
+		//leave any vc rooms first
+		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " leave chat room\n";
+		//remove token
+		if (!participant->id) { std::cout << "participant id is 0. not leaving room\n"; return; }
+		send_room_leave_notifications(participant);
+		auto it = tokens.find(participant->id);
+		std::cout << "search for token @ participant id " << static_cast<int>(participant->id) << "\n";
+		if (it != tokens.end()) {
+			tokens.erase(participant->id);
+		}
+		//leave chat room
 		release_id(participant->id);
 		participant_map.erase(participant->id);
 	}
@@ -349,33 +477,49 @@ public:
 		std::cout << "accept_vc_request(): sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
 		chat_message msg;
 		uint8_t vc_room_id = create_vc_room();
-		/*vc_rooms.at(vc_room_id)->add_participant(participant_map[sender_id]);
-		vc_rooms.at(vc_room_id)->add_participant(participant_map[receiver_id]);
+		std::cout << "create vc_room_id " << static_cast<int>(vc_room_id) << "\n";
+		vc_rooms.at(vc_room_id)->join_room(participant_map[sender_id]);
+		vc_rooms.at(vc_room_id)->join_room(participant_map[receiver_id]);
 		msg.msg_type = message_type::accept_vc_request;	
 		uint8_t ids[max_participants];
 		uint8_t count;
-		get_room_participant_ids(vc_room_id, ids, count);
+		vc_rooms.at(vc_room_id)->get_participant_ids(ids, count);
 		std::memcpy(msg.body(), &count, sizeof(count));
 		std::memcpy(msg.body() + sizeof(count), ids, count);
 		std::memcpy(msg.body() + sizeof(count) + count, &vc_room_id, sizeof(vc_room_id));
 		std::memcpy(msg.body() + sizeof(count) + count + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
 		msg.body_length(sizeof(count) + count + sizeof(vc_room_id) + sizeof(udp_port));
-		//msg.body_length(sizeof(count));
 		msg.encode_header();
-		std::string header = std::string(msg.data(), chat_message::header_length);
-		std::string body = std::string(msg.body(), msg.body_length());
-		std::cout << "accept_vc_request count[" << static_cast<int>(count) << "] header[" << header << "] body[" << body << "]\n";
-		hex_dump(msg.body(), msg.body_length());
+		//std::string header = std::string(msg.data(), chat_message::header_length);
+		//std::string body = std::string(msg.body(), msg.body_length());
+		//std::cout << "accept_vc_request count[" << static_cast<int>(count) << "] header[" << header << "] body[" << body << "]\n";
 		approved_vcs.emplace(sender_id, receiver_id);
 		if (sender_id != receiver_id) {
-			std::cout << "no dupe emplace\n";
 			approved_vcs.emplace(receiver_id, sender_id);
 		}
 		participant_map.at(sender_id)->deliver(msg);
 		if (sender_id != receiver_id) {
-			std::cout << "no dupe deliver\n";
 			participant_map.at(receiver_id)->deliver(msg);
-		}*/
+		}
+	}
+	void accept_mic_check_request(chat_message& m) {
+		uint8_t sender_id = 0;
+		std::memcpy(&sender_id, m.body(), sizeof(uint8_t));//sender id is always first
+		chat_message msg;
+		uint8_t vc_room_id = create_vc_room();
+		std::cout << "create vc_room_id " << static_cast<int>(vc_room_id) << "\n";
+		vc_rooms.at(vc_room_id)->join_room(participant_map[sender_id]);
+		msg.msg_type = message_type::mic_test;
+		std::memcpy(msg.body(), &sender_id, 1);
+		std::memcpy(msg.body() + sizeof(sender_id), &vc_room_id, sizeof(vc_room_id));
+		std::memcpy(msg.body() + sizeof(sender_id) + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
+		msg.body_length(+sizeof(sender_id) + sizeof(vc_room_id) + sizeof(udp_port));
+		msg.encode_header();
+		std::string header = std::string(msg.data(), chat_message::header_length);
+		std::string body = std::string(msg.body(), msg.body_length());
+		//std::cout << "accept_vc_request count[" << static_cast<int>(count) << "] header[" << header << "] body[" << body << "]\n";
+		approved_vcs.emplace(sender_id, sender_id);
+		participant_map.at(sender_id)->deliver(msg);
 	}
 	void get_room_participant_ids(uint8_t room_id, uint8_t* ids, uint8_t& count) {
 		count = 0;
@@ -389,20 +533,17 @@ public:
 	}
 	uint8_t create_vc_room() {
 		uint8_t id = vc_room_id_gen.generate_id();
-		auto room = std::make_shared<voice_chat_room>(udp_socket_, udp_endpoint_, io_context_);
+		auto room = std::make_shared<voice_chat_room>(udp_socket_, udp_endpoint_, io_context_, id);
 		vc_rooms.emplace(id, room);//TODO dunno if 'this' works
-		room->start_dispatch();
 		return id;
 	}
 private:
 	std::unordered_map<uint8_t, uint8_t> approved_vcs;//sender_id, partner_id
-	std::unordered_map<uint8_t, std::shared_ptr<voice_chat_room>> vc_rooms;
 	std::shared_ptr<udp::socket> udp_socket_;
 	udp::endpoint& udp_endpoint_;
 	enum {max_recent_msgs = 100};
 	id_generator vc_room_id_gen{};
 	ma_rb ring_buffer_;
-
 };
 
 struct endpoint_hash {
@@ -432,19 +573,34 @@ public:
 		active
 	};
 	chat_session(tcp::socket socket, tcp::endpoint tcp_endpoint, std::shared_ptr<udp::socket> udp_socket,
-		udp::endpoint udp_endpoint, unsigned short client_port,  std::shared_ptr<chat_room> room):
+		udp::endpoint udp_endpoint, unsigned short client_port,  std::shared_ptr<chat_room> room, boost::asio::io_context& io_context):
 		socket_(std::move(socket)),
 		tcp_endpoint_{tcp_endpoint},
 		udp_socket_{udp_socket},
 		client_ip_{ tcp_endpoint.address().to_string()},
 		client_port_{client_port},
 		room_(room),
-		authenticated(false){}
+		authenticated(false),
+		io_context{io_context},
+		vc_room_id(0)
+	{
+	}
 
-	/*chat_session(tcp::socket socket, room_manager* room_manager):
-		socket_(std::move(socket)),
-		room_manager_(room_manager),
-		authenticated(false) {}*/
+	bool get_feedback_option() override {
+		return feedback;
+	}
+	void commit_read_rb(size_t size) override{
+		ma_rb_commit_read(&vc_rb, size);
+	}
+	std::shared_ptr<boost::asio::ip::udp::endpoint> get_client_udp_endpoint() override {
+		return udp_remote_endpoint_;
+	}
+	uint8_t get_vc_room_id() override {
+		return vc_room_id;
+	}
+	void set_vc_room_id(uint8_t id) override {
+		vc_room_id = id;
+	}
 	void send_authentication_request() {
 		chat_message auth;
 		std::string text = "gimme auth";
@@ -456,6 +612,8 @@ public:
 	}
 	void wait_for_ready() {
 		state_ = session_state::wait;
+		authenticated = false;
+		id = 0;
 		do_read_header(); 
 	}
 	void start() {
@@ -476,6 +634,110 @@ public:
 		prompt.encode_header();
 		deliver(prompt);
 	}
+	bool init_rb(){
+		ma_uint32 bpf;
+		ma_uint32 subBufferSizeInFrames;
+		//subBufferSizeInFrames = deviceCapture.capture.internalPeriodSizeInFrames * 5;
+		//bpf = ma_get_bytes_per_frame(deviceCapture.capture.format, deviceCapture.capture.channels);
+		//rb  size in bytes = 19200
+		//just set to 19200 for now. eventually will need to calculate size
+		ma_result result = ma_rb_init(19200, NULL, NULL, &vc_rb);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize capture ring buffer\n";
+			return false;
+		}
+		return true;
+	}
+	void uninit_rb() {
+		ma_rb_uninit(&vc_rb);
+	}
+	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
+	//	std::cout << "write_vc_msg_to_rb()\n";
+		void* pwrite_void = nullptr;
+		size_t size = recv_vc_msg_->body_length();
+		size_t requested = size;
+		size_t total_written = 0;
+		ma_result result;
+		uint8_t* data = (uint8_t*)recv_vc_msg_->body();
+		while (requested > 0) {
+			size = requested;
+			//std::cout << "write size request = " << size << "\n";
+			result = ma_rb_acquire_write(&vc_rb, &size, &pwrite_void);
+			//std::cout << "actual write size = " << size << "\n";
+			if (result != MA_SUCCESS || size == 0) {
+				std::cerr << "fail server write acquire size = " << size << "\n";
+				break;
+			}
+			std::memcpy(pwrite_void, data + total_written, (uint16_t)size);
+			ma_rb_commit_write(&vc_rb, size);
+			requested -= size;
+			total_written += size;
+		}
+		//std::cout << "total_written = " << total_written << "\n";
+	}
+	bool try_send_vc_msg(void* in, size_t size) {
+		//std::cout << "try_send_vc_msg()\n";
+		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
+		uint8_t test = 3;
+		/*std::cout << "encoding:"
+			<< "\n\tsession_token[" << session_token << "]"
+			<< "\n\tsize[" << static_cast<int>(size) << "]"
+			<< "\n\tvc_room_id[" << static_cast<int>(vc_room_id) << "]"
+			<< "\n\tid[" << static_cast<int>(id) << "]"
+			<< "\n\ttest[" << static_cast<int>(test) << "]\n";*/
+		m->encode_header(session_token, size, vc_room_id, id);
+		std::memcpy(m->body(), in, size);
+		if (room_->vc_rooms.find(vc_room_id) == room_->vc_rooms.end()) {
+			std::cerr << "chat_participant " << id << " vc_room_id " << vc_room_id << "doesn't exist\n";
+			return false;
+		}
+		/*if (room_->vc_rooms[vc_room_id]->participants_.size() <= 1) { 
+			std::cout << "room only has 1 participant not sending msg\n";
+			return false; }*/
+		//std::cout << "send_message_to_playback()\n";
+		room_->vc_rooms[vc_room_id]->send_message_to_playback(m, id);
+		return true;
+	}
+	void start_read_vc_rb() override {
+		running_vc = true;
+		init_rb();
+		auto self = shared_from_this();
+		boost::asio::post(io_context, [this, self] { read_vc_rb(); });
+	}
+	void stop_read_vc_rb() override {
+		running_vc = false;
+		uninit_rb();
+	}
+	void read_vc_rb() override {
+		if (!running_vc) { return; }
+		auto self = shared_from_this();
+		ma_result result;
+		size_t size = voice_chat_message::buffer_size;
+		void* pOut;
+		//std::cout << "requested read size[" << size << "]\n";
+		result = ma_rb_acquire_read(&vc_rb, &size, &pOut);
+		if (result != MA_SUCCESS || size == 0) {
+			//std::cerr << "fail server read acquire " << result
+				//<< "\n\tserver read size available = " << ma_rb_available_read(&vc_rb) << "\n";
+			boost::asio::post(io_context, [this, self] { read_vc_rb(); });
+			return;
+		}
+		//std::cout << "actual read size[" << size << "]\n";
+		if (size > voice_chat_message::max_body_length) { size = voice_chat_message::max_body_length; }
+		if (!try_send_vc_msg(pOut, size)) {
+			/*auto retry_timer = std::make_shared <boost::asio::steady_timer>(io_context);
+			retry_timer->expires_after(std::chrono::milliseconds(2));
+			retry_timer->async_wait([this, self, retry_timer](boost::system::error_code ec) {
+				if (!ec) {
+					read_vc_rb();
+				}
+			});*/
+			//shut down voice chat TODO
+			return;
+		}
+		//std::cout << "try send done re posting read_vc_rb\n";
+		boost::asio::post(io_context, [this, self] { read_vc_rb(); });
+	}
 	void deliver(const chat_message& msg) override
 	{
 		bool write_in_progress = !write_msgs_.empty();
@@ -486,40 +748,6 @@ public:
 			do_write();
 		}
 	}
-	void deliver(const uint8_t* recv_buffer, uint8_t sender_id, uint16_t len) override {//not using sender_id
-		bool write_in_progress = !write_vc_msgs.empty();
-		packet p;
-		p.size = len;
-		p.data = std::make_unique<uint8_t[]>(len);
-		std::memcpy(p.data.get(), recv_buffer, len);
-		write_packets.push_back(std::move(p));
-		if (!write_in_progress) {
-			if (udp_remote_endpoint_ == nullptr) { return; }
-			do_send();
-		}
-	}
-	void do_send() {
-		udp_socket_->async_send_to(boost::asio::buffer(write_packets.front().data.get(), write_packets.front().size),
-			*udp_remote_endpoint_,
-			[this](boost::system::error_code ec, std::size_t bytes) {
-				handle_send(ec, bytes);
-			});
-	}
-	void handle_send(const boost::system::error_code& ec,
-		std::size_t msg_size) {
-		if (!ec) {
-			write_vc_msgs.pop_front();
-			if (!write_vc_msgs.empty()) {
-				do_send();
-			}
-		}
-		else {
-			std::cerr << "Write error: " << ec.message() << "\n";
-			//room_.leave(shared_from_this());
-		}
-	}
-
-
 private:
 	std::string generate_token() {
 		std::array<uint8_t, 12> bytes;
@@ -535,8 +763,9 @@ private:
 	bool verify_authorization_response(chat_message& msg) {
 		std::string p = std::string(msg.body(), msg.body_length());
 		if (p.find(key) != std::string::npos) {
-			std::cout << "auth verified!\n";
+			std::cout << "auth verified!!!\n";
 			session_token = generate_token();
+			std::cout << "session_token[" << session_token << "]\n";
 			return true;
 		}
 		std::cout << "auth not verified\n";
@@ -544,21 +773,29 @@ private:
 	}
 	void store_client_udp_port(chat_message& msg) {
 		std::cout << "store!\n";
-		uint16_t port = 0;
-		if (msg.body_length() < sizeof(port)) {
-			header_not_recognized_error();
+		//uint16_t port = 0;
+		//if (msg.body_length() < sizeof(port)) {
+			//header_not_recognized_error();
 			//todo cancel out vc request for both clients
-			return;
-		}
-		std::cout << "no bad header\n";
-		std::memcpy(&port, msg.body(), sizeof(port));
-		udp_remote_endpoint_ = std::make_shared<udp::endpoint>(client_ip, port);//TODO code review
+			//return;
+		//}
+		//std::cout << "no bad header\n";
+		//std::memcpy(&port, msg.body(), sizeof(port));
+		std::string port_2(msg.body(), msg.body_length());
+		//std::cout << "udp port = " << port << "\n";
+		std::cout << "udp port_2 = " << port_2 << "\n";
+		std::cout << "test\n";
+		//udp_remote_endpoint_ = std::make_shared<udp::endpoint>(client_ip, port);
+		udp_remote_endpoint_ = std::make_shared<udp::endpoint>(tcp_endpoint_.address(), std::stoi(port_2));
+		//std::shared_ptr<boost::asio::ip::udp::endpoint> ep_2 = std::make_shared<udp::endpoint>(client_ip, std::stoi(port_2));
+		std::cout << "udp_remote_endpoint port = " << static_cast<int>(udp_remote_endpoint_->port()) << "\n";
+		//std::cout << "udp_remote_endpoint port_2 = " << (ep_2->port()) << "\n";//TODO use this endpoint bc sending port as char not bytes
 		chat_message response;
 		response.body_length(session_token.length());
 		response.set_message_type(message_type::start_vc);
 		std::memcpy(response.body(), session_token.c_str(), session_token.length());
 		response.encode_header();
-		std::cout << "send udp\n";
+		//std::cout << "send udp\n";
 		deliver(response);
 	}
 	void header_not_recognized_error() {
@@ -588,9 +825,10 @@ private:
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
 				if (!ec && read_msg_.decode_header()) {
-					std::string header = std::string(read_msg_.data(), chat_message::header_length);
-					std::cout << "read_msg_header[" << header << "]\n";
+					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					//std::cout << "read_msg_header[" << header << "]\n";					
 					do_read_body();
+					
 				}
 				else {
 					std::cerr << "read error: " << ec.message() << "\n";
@@ -604,18 +842,37 @@ private:
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
-
 				if (!ec) {
 					std::string header = std::string(read_msg_.data(), chat_message::header_length);
 					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
-					std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					//validate client is authorized!! TODO
+					if (!authenticated) {
+						if(verify_authorization_response(read_msg_)){
+							chat_message m;
+							m.body_length(session_token.length());//16 bytes/chars
+							m.set_message_type(message_type::authentication_approve);
+							std::memcpy(m.body(), session_token.c_str(), m.body_length());
+							m.encode_header();
+							deliver(m);
+							authenticated = true;
+						}
+						else {
+							send_authentication_request();
+							authenticated = false;
+							//room_->leave(shared_from_this());
+						}
+						do_read_header();
+						return;
+
+					}
 					switch (read_msg_.msg_type) {
-						case(message_type::ready_notification): {
+						/*case(message_type::ready_notification): {
 							if (state_ == session_state::wait) {
 								send_authentication_request();
 							}
 							break;
-						}
+						}*/
 
 						case(message_type::start_room_request): {
 							if (authenticated) {
@@ -630,38 +887,20 @@ private:
 						}
 						case(message_type::name_change_request): {
 							state_ = session_state::awaiting_name;
+							//name is preceded by uint8_t id
 							std::string name(read_msg_.body() + sizeof(uint8_t), read_msg_.body_length() - sizeof(uint8_t));
+							room_->leave(shared_from_this());
 							if (!name.empty()) {
 								uint8_t id = 0;
 								std::memcpy(&id, read_msg_.body(), sizeof(uint8_t));
 								change_name(name);
-								std::cout << "name changed\n";
+								//std::cout << "name changed\n";
 								this->id = id;
 								room_->join(shared_from_this());
 								room_->update_client_participants();
 							}
 						}
 							break;
-						case(message_type::authentication_response): {
-							if (verify_authorization_response(read_msg_)) {
-								chat_message m;
-								//std::string text = "accept";
-								//m.body_length(text.length());
-								m.body_length(session_token.length());//16 bytes/chars
-								m.set_message_type(message_type::authentication_approve);
-								std::memcpy(m.body(), session_token.c_str(), m.body_length());
-								//std::memcpy(m.body(), text.c_str(), m.body_length());
-								m.encode_header();
-								deliver(m);
-								authenticated = true;
-							}
-							else {
-								std::cerr << "bye bye!" << "\n";
-								authenticated = false;
-								room_->leave(shared_from_this());
-							}
-							break;
-						}
 						case(message_type::chat): {
 							std::string full_msg = name + ": ";
 							full_msg.append(read_msg_.body(), read_msg_.body_length());
@@ -684,8 +923,18 @@ private:
 							break;
 						}
 						case(message_type::send_udp_port): {
-							std::cout << "got send_udp_port\n";
+							//std::cout << "got send_udp_port\n";
 							store_client_udp_port(read_msg_);//TODO code review this
+							break;
+						}
+						case(message_type::mic_test): {
+							room_->accept_mic_check_request(read_msg_);
+							break;
+						}
+						case(message_type::end_vc):{
+							//room_->send_vc_leave_notification(shared_from_this());
+							//room_->send_vc_leave_notifications(shared_from_this());
+							room_->leave_vc_room(shared_from_this());
 							break;
 						}
 															
@@ -695,6 +944,7 @@ private:
 				else {
 					std::cerr << "Write error: " << ec.message() << "\n";
 					room_->leave(shared_from_this());
+					authenticated = false;
 				}
 			}
 		);
@@ -713,8 +963,8 @@ private:
 				if (!ec) {
 					std::string header = std::string(msg.data(), chat_message::header_length);
 					std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
-					std::cout << "write msg header[" << header << "] body [" << body << "]\n";
-						std::cout << "!ec\n";
+					//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+						//std::cout << "!ec\n";
 						write_msgs_.pop_front();
 						if (!write_msgs_.empty()) {
 							do_write();
@@ -733,13 +983,15 @@ private:
 	chat_message_queue write_msgs_;
 	session_state state_ = session_state::wait;
 	bool authenticated = false;
-	std::string session_token;//16 characters
+	bool running_vc = false;
+	bool feedback = true;
+	//std::string session_token;//16 characters
 	boost::asio::ip::address client_ip;
-
 	std::shared_ptr<udp::socket> udp_socket_;
-	std::shared_ptr<udp::endpoint> udp_remote_endpoint_;
-	vc_message_queue write_vc_msgs;
-	packet_queue write_packets;
+	std::shared_ptr<udp::endpoint> udp_remote_endpoint_;//make value type?
+	ma_rb vc_rb;
+	boost::asio::io_context& io_context;
+	uint8_t vc_room_id;
 };
 class chat_server {
 public:
@@ -754,7 +1006,7 @@ public:
 	}
 	void do_receive() {
 		if (udp_socket_ != nullptr) {
-			udp_receive_from();
+			udp_start_receive();
 		}
 	}
 private:
@@ -768,52 +1020,82 @@ private:
 				unsigned short client_port = remote_ep.port();
 				std::cout << "tcp connection from [" << client_ip << "] on port[" << client_port << "]\n";
 				if (!ec) {
-					std::make_shared<chat_session>(std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_)->wait_for_ready();
+					std::make_shared<chat_session>(std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->wait_for_ready();
 				}
 				do_accept();
 			}); 
 	}
-	void udp_receive_from() {
+	void udp_start_receive() {
+		auto recv_vc_msg_ = std::make_shared<voice_chat_message>();
 		udp_socket_->async_receive_from(
-			boost::asio::buffer(recv_buffer), udp_remote_endpoint_,
-			[this](boost::system::error_code ec, std::size_t bytes_recvd) {
-				handle_receive(ec, udp_remote_endpoint_, recv_buffer, bytes_recvd);
-			});
-			/*std::bind(&chat_server::handle_receive, this,
-				boost::asio::placeholders::error, udp_remote_endpoint_, recv_buffer, bytes_transferred_));*/
+			boost::asio::buffer(recv_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), 
+			udp_remote_endpoint_,
+			std::bind(&chat_server::handle_receive, this,
+				udp_remote_endpoint_,
+				recv_vc_msg_,
+				boost::asio::placeholders::error,
+				boost::asio::placeholders::bytes_transferred));
 	}
-	void handle_receive(const boost::system::error_code& error, udp::endpoint remote_endpoint,
-		uint8_t* recv_, size_t bytes_transferred_) {
-		if (error) {
-			std::cerr << "UDP receive error: " << error.message() << "\n";
-			udp_receive_from();
-			return;
+	void udp_start_receive_old() {
+		auto recv_vc_msg_ = std::make_shared<voice_chat_message>();
+		udp_socket_->async_receive_from(
+			boost::asio::buffer(recv_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), udp_remote_endpoint_,
+			[this, recv_vc_msg_](boost::system::error_code ec, std::size_t bytes_recvd) {
+				if (!ec) {
+					if (recv_vc_msg_->decode_header()) {
+						handle_receive_old(udp_remote_endpoint_, recv_vc_msg_);
+					}
+				}
+				udp_start_receive_old();
+			});
+	}
+	void handle_receive(udp::endpoint remote_endpoint, std::shared_ptr<voice_chat_message> recv_vc_msg_, const boost::system::error_code& error,
+		std::size_t) {
+		udp_start_receive();
+		if (!error) {
+			if (recv_vc_msg_->decode_header()) {
+				std::string client_ip = remote_endpoint.address().to_string();
+				unsigned short client_port = remote_endpoint.port();
+				std::string key = client_ip + " : " + std::to_string(client_port);
+				if (ips.insert(key).second) {
+					std::cout << "new udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
+				}
+				bool token_valid = room_->validate_token(recv_vc_msg_->sender_id, recv_vc_msg_->token);
+				if (recv_vc_msg_->token_len == voice_chat_message::token_length && token_valid) {
+					if (!room_->route_udp(recv_vc_msg_->room_id, recv_vc_msg_)) {
+						std::cerr << "room " << recv_vc_msg_->room_id << " not found\n";
+					}
+				}
+				else {
+					std::cerr << "bad token: token_len[" << static_cast<int>(recv_vc_msg_->token_len) << "] validate_token[" << token_valid << "]\n";
+				}
+			}
 		}
+	}
+	bool handle_receive_old(udp::endpoint remote_endpoint,std::shared_ptr<voice_chat_message> recv_vc_msg_) {
+		//std::cout << "udp recieve\n";
 		std::string client_ip = remote_endpoint.address().to_string();
 		unsigned short client_port = remote_endpoint.port();
 		std::string key = client_ip + " : " + std::to_string(client_port);
 		if (ips.insert(key).second) {
 			std::cout << "new udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
 		}
-		if (bytes_transferred_ >= voice_chat_message::header_length) {
-			std::cerr << "malformed header\n";
-		}
-		voice_chat_message vm{};		
-		vm.decode_header(recv_);
-		uint8_t token_len = vm.token_len;
-		std::string token = vm.token;
-		uint8_t room_id = vm.room_id;
-		uint8_t sender_id = vm.sender_id;
-		uint16_t len = vm.len;	
-		if (token_len == voice_chat_message::token_length && room_->validate_token(sender_id, token)) {
-			if(!room_->route_udp(room_id, recv_, bytes_transferred_)){
-				std::cerr << "room " << room_id << " not found\n";
+		//std::cout << "udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
+
+		bool token_valid = room_->validate_token(recv_vc_msg_->sender_id, recv_vc_msg_->token);
+		if (recv_vc_msg_->token_len == voice_chat_message::token_length && token_valid) {
+			if(!room_->route_udp(recv_vc_msg_->room_id, recv_vc_msg_)){
+				std::cout << "search for room for udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
+				std::cerr << "room " << static_cast<int>(recv_vc_msg_->room_id) << " not found\n";
+				return false;
 			}
 		}
 		else {
-			std::cerr << "bad token\n";
+			std::cerr << "bad token: token_len[" << static_cast<int>(recv_vc_msg_->token_len) << "] validate_token[" << token_valid << "]\n";
+			return false;
 		}
-		udp_receive_from();
+		//std::cout << "accept udp connection w/ token: " << recv_vc_msg_->token << "\n";
+		return true;
 	}
 
 	boost::asio::io_context& io_context_;
@@ -822,9 +1104,7 @@ private:
 	udp::endpoint& udp_endpoint_;
 	udp::endpoint udp_remote_endpoint_;
 	std::shared_ptr<chat_room> room_;
-	uint8_t recv_buffer[voice_chat_message::max_encoded_length + voice_chat_message::header_length];//beware concurrent access if multiple servers using same socket
 	std::unordered_set<std::string> ips;
-	//room_manager room_manager_{};
 };
 class voice_chat_session : public voice_chat_participant,
 	public std::enable_shared_from_this<voice_chat_session>
@@ -853,7 +1133,7 @@ public:
 	}
 private:
 	void do_send() {
-		socket_->async_send_to(boost::asio::buffer(write_packets.front().data.get(), write_vc_msgs.front().len),
+		socket_->async_send_to(boost::asio::buffer(write_packets.front().data.get(), write_vc_msgs.front().body_length()),
 			remote_endpoint_, std::bind(
 				&voice_chat_session::handle_send, this, write_vc_msgs.front(),
 				boost::asio::placeholders::error,

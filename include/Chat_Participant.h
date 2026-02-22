@@ -5,12 +5,14 @@
 #include <memory>
 #include "Chat_Message.h"
 #include "Voice_Chat_Message.h"
+#include "boost/asio.hpp"
 
 enum class voice_chat_state : uint8_t {
 	none = 0,
 	initiating = 1,
 	recieving_request = 2,
-	in_session = 3
+	in_session = 3,
+	self_test_session = 4
 };
 //
 void hex_dump(const char* data, size_t length) {
@@ -36,11 +38,15 @@ public:
 	virtual ~chat_participant() {}//virtual prevents only base destructor from running when inherited from
 	//virtual void deliver(const chat_message& msg) = 0;
 	virtual void deliver(const chat_message& msg) {};
-	virtual void deliver(const uint8_t* recv_, uint8_t sender_id_, uint16_t len_) {};
-	//virtual void serialize(char* out) = 0;
-	//virtual void deserialize(const char* in) = 0;
-
-
+	virtual void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) {};
+	virtual void set_vc_room_id(uint8_t id) {};
+	virtual uint8_t get_vc_room_id() { return 0; }
+	virtual std::shared_ptr<boost::asio::ip::udp::endpoint> get_client_udp_endpoint() { return nullptr; };
+	virtual void read_vc_rb() {};
+	virtual void commit_read_rb(size_t size) {};
+	virtual void start_read_vc_rb() {};
+	virtual void stop_read_vc_rb() {};
+	virtual bool get_feedback_option() { return false;};
 	std::size_t serialized_size() {
 		size_t size = 0;
 		size += sizeof(id);

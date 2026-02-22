@@ -23,7 +23,7 @@ set(LINUX_GLOBAL_INCLUDE_DIR /usr/local/include)
 # Include sub-projects.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux") 
 add_subdirectory("Test_Chat_Server")
-set(BOOST_ROOT "usr/local/include/boost_1_85_0")
+set(BOOST_ROOT "usr/local/include/boost_1_89_0")
 elseif(WIN32)
 add_subdirectory ("Test_Chat_Client") 
 set(BOOST_ROOT "C:/includes/boost_1_89_0")
