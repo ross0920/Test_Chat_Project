@@ -1,7 +1,7 @@
 ﻿# CMakeList.txt : CMake project for Test_Chat_Project, include source and define
 # project specific logic here.
 #
-
+#TEST CHANGE
 # Add source to this project's executable.
 add_executable (Test_Chat_Client  "Chat_Client.cpp"
 	"${GLOBAL_INCLUDE_DIR}/glad/glad.c"
