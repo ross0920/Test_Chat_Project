@@ -38,30 +38,29 @@ target_include_directories(Test_Chat_Client PRIVATE
 
 set(OPUS_DEBUG_LIB "${GLOBAL_INCLUDE_DIR}/opus/build/Debug/opus.lib")
 set(OPUS_RELEASE_LIB "${GLOBAL_INCLUDE_DIR}/opus/build/Release/opus.lib")
-set(BOOST_DEBUG_LIB_DIR "${GLOBAL_INCLUDE_DIR}/boost_1_89_0/_build/stage/lib/Debug")
-set(BOOST_RELEASE_LIB_DIR "${GLOBAL_INCLUDE_DIR}/boost_1_89_0/_build/stage/lib/Release")
+set(BOOST_LIB_DIR "${GLOBAL_INCLUDE_DIR}/boost_1_89_0/_build/stage/lib/Debug")
 
 target_link_libraries(Test_Chat_Client PRIVATE
 	$<$<CONFIG:DEBUG>:
-		${BOOST_DEBUG_LIB_DIR}/libboost_thread-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_thread-vc143-mt-gd-x64-1_89.lib>
 	$<$<CONFIG:RELEASE>:
-		${BOOST_RELEASE_LIB_DIR}/libboost_thread-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_thread-vc143-mt-x64-1_89.lib>
 	$<$<CONFIG:DEBUG>:
-		${BOOST_DEBUG_LIB_DIR}/libboost_atomic-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_atomic-vc143-mt-gd-x64-1_89.lib>
 	$<$<CONFIG:RELEASE>:
-		${BOOST_RELEASE_LIB_DIR}/libboost_atomic-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_atomic-vc143-mt-x64-1_89.lib>
 	$<$<CONFIG:DEBUG>:
-		${BOOST_DEBUG_LIB_DIR}/libboost_chrono-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_chrono-vc143-mt-gd-x64-1_89.lib>
 	$<$<CONFIG:RELEASE>:
-		${BOOST_RELEASE_LIB_DIR}/libboost_chrono-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_chrono-vc143-mt-x64-1_89.lib>
 	$<$<CONFIG:DEBUG>:
-		${BOOST_DEBUG_LIB_DIR}/libboost_container-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_container-vc143-mt-gd-x64-1_89.lib>
 	$<$<CONFIG:RELEASE>:
-		${BOOST_RELEASE_LIB_DIR}/libboost_container-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_container-vc143-mt-x64-1_89.lib>
 	$<$<CONFIG:DEBUG>:
-		${BOOST_DEBUG_LIB_DIR}/libboost_date_time-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_date_time-vc143-mt-gd-x64-1_89.lib>
 	$<$<CONFIG:RELEASE>:
-		${BOOST_RELEASE_LIB_DIR}/libboost_date_time-vc143-mt-gd-x64-1_89.lib>
+		${BOOST_LIB_DIR}/libboost_date_time-vc143-mt-x64-1_89.lib>
 
 	"${GLOBAL_INCLUDE_DIR}/boost_1_89_0/"
 	"${GLOBAL_INCLUDE_DIR}/openssl/lib/VC/x64/MTd/libssl_static.lib"
@@ -69,10 +68,9 @@ target_link_libraries(Test_Chat_Client PRIVATE
 	$<IF:$<CONFIG:Debug>,${OPUS_DEBUG_LIB}, ${OPUS_RELEASE_LIB}>
 	${GLOBAL_INCLUDE_DIR}/glfw/glfw3.lib
 	Ws2_32.lib
-	Crypt32.lib 
+	Crypt32.lib
+	CryptUI.lib
 )
-
-
 # Force static CRT: /MT for Release, /MTd for Debug
 #set_property(TARGET Test_Chat_Client PROPERTY
  # MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"

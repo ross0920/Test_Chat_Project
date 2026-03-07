@@ -29,7 +29,6 @@
 #include <ssl/include/openssl/ssl.h>
 #include <ssl/include/openssl/err.h>
 
-
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 #define BOOST_NETWORK_ENABLE_HTTPS

@@ -3,7 +3,6 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-//#include <Windows.h>
 #include <stdio.h>
 #include <numeric>
 #include <unordered_map>
@@ -15,6 +14,12 @@
 #include <thread>
 #include <atomic>
 #include <unordered_set>
+//#include <windows.h>
+//#include <wincrypt.h>
+//#include <cryptuiapi.h>
+//#include <tchar.h>
+//#pragma comment (lib, "crypt32.lib")
+//#pragma comment (lib, "cryptui.lib")
 #include <boost/winapi/config.hpp>//must include to set win version for atomic
 #include "boost/asio.hpp"
 #include "boost/thread.hpp"
@@ -33,6 +38,12 @@
 #include "openssl/bio.h"
 #include "openssl/err.h"
 #include "openssl/applink.c"
+//must include this after boost includes to avoid winsock.h conflict
+#include <windows.h>
+#include <wincrypt.h>
+#include <cryptuiapi.h>
+#include <tchar.h>
+#define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
@@ -446,30 +457,6 @@ public:
 	void close() {
 		boost::asio::post(io_context_, [this]() {socket_->close(); });
 	}
-	/*void end_vc() {
-		vc_partner_ids.clear(); //only will get 2 vc participants currently
-		for (int i = 0; i < count; i++) {
-			uint8_t temp_id = 0;
-			std::memcpy(&temp_id, m.body() + sizeof(sender_id) + sizeof(count) + sizeof(uint8_t) * i, sizeof(uint8_t));
-			if (temp_id == me.id) {
-				mic_test = false;
-				me.vc_state = voice_chat_state::none;
-			}
-			if (participant_map.find(temp_id) == participant_map.end()) { continue; }
-			participant_client_map.at(temp_id).ps = participant_state::neutral;
-			participant_client_map.at(temp_id).p.vc_state = voice_chat_state::none;//p needs to be a ptr TODO
-			vc_partner_ids.erase(temp_id);
-		}
-		vc_room_id = 0;
-		stop_playback();
-		//TODO revisit this
-		//uninit_playback();
-		//uninit_playback_rb();
-		stop_capture();
-		//uninit_capture();
-		//uninit_capture_rb();
-	}*/
-
 
 private:
 	void check_and_read_header_test(){
@@ -518,23 +505,6 @@ private:
 			total_written += write_size;
 		}
 	}
-	/*void check_and_read() {
-		if (!running_playback_) { return; }
-		auto self = shared_from_this();
-		udp_socket->async_receive_from(boost::asio::buffer(recv_buffer_), server_endpoint,
-			[this, self](boost::system::error_code ec, std::size_t bytes) {
-				if (!ec && bytes > 0) {
-					void* pwrite = nullptr;
-					size_t write_size = bytes;
-					if (ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pwrite) ==
-						MA_SUCCESS && write_size >= bytes) {
-						std::memcpy(pwrite, recv_buffer_.data(), bytes);
-						ma_rb_commit_write(&playback_ctx.ring_buffer, bytes);
-					}
-				}
-				check_and_read();
-			});
-	}*/
 	std::shared_ptr<boost::asio::steady_timer> retry_read_capture_timer;
 	void check_and_send_test() {
 		if (!running_capture_) { std::cout << "NOT RUNNING CAPTURE!\n"; return; }
@@ -580,39 +550,6 @@ private:
 			);
 		}
 	}
-	/*void check_and_send(){
-		if (!running_capture_) { return; }
-		void* pread_void = nullptr;
-		size_t read_size = sizeof(uint16_t);
-		if (ma_rb_acquire_read(&capture_ctx.ring_buffer, &read_size, &pread_void) ==
-			MA_SUCCESS && read_size >= sizeof(uint16_t)) {
-			uint16_t len = 0;
-			std::memcpy(&len, pread_void, sizeof(len));
-			size_t total = sizeof(len) + len;
-			if (read_size >= total) {
-				auto buffer = boost::asio::buffer(pread_void, total);
-				auto self = shared_from_this();
-				udp_socket->async_send_to(buffer, server_endpoint,
-					[this, self, total](boost::system::error_code ec, std::size_t bytes) {
-						if (!ec && bytes == total) {
-							ma_rb_commit_read(&capture_ctx.ring_buffer, total);
-						}
-						else {
-							ma_rb_commit_read(&capture_ctx.ring_buffer, total);
-						}
-						check_and_send();
-					});
-				return;
-			}
-		}
-		auto self = shared_from_this();
-		boost::asio::steady_timer* timer = new boost::asio::steady_timer(io_context_);
-		timer->expires_after(std::chrono::milliseconds(2));
-		timer->async_wait([this, self, timer](boost::system::error_code) {
-			delete timer;
-			check_and_send();
-		});
-	}*/
 	void add_participants(chat_message& m) {
 		participants.clear();
 		participant_map.clear();
@@ -730,7 +667,7 @@ private:
 		udp_socket->open(udp::v4());
 		start_mic(device_);
 	}
-	void end_vc_old(chat_message& m) {
+	/*void end_vc_old(chat_message& m) {
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
 		if (sender_id != me.id) {
@@ -760,7 +697,7 @@ private:
 		stop_capture();
 		//uninit_capture();
 		//uninit_capture_rb();
-	}
+	}*/
 	void remove_sender_from_vc(chat_message& m) {
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
@@ -793,26 +730,6 @@ private:
 			vc_partner_ids.erase(sender_id);
 		}
 	}
-	//can prob delete this
-	/*void send_vc() {
-		std::array<uint8_t, 512> voice_data{};//TODO get data
-		udp_socket->async_send_to(boost::asio::buffer(voice_data),
-			server_endpoint,
-			[this](boost::system::error_code ec, std::size_t bytes_sent) {
-				if (!ec) {
-					udp_timer_.expires_after(std::chrono::milliseconds(20));
-					udp_timer_.async_wait([this](boost::system::error_code) {
-						send_vc(); });
-				}
-				else {
-					//TODO end the voice chat
-					std::cerr << "udp send error: " << ec.message() << "\n";
-					udp_socket->close();
-				}
-			}
-		);
-
-	}*/
 	void process_msg_type(chat_message& m) {
 		switch (m.msg_type) {
 			case message_type::chat:
@@ -2102,45 +2019,8 @@ int stop_device(ma_device& device) {
 		return -1;
 	}
 }
-int main(int argc, char* argv[])
-{	 
-	//mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-	//screenWidth = mode->width;
-	//screenHeight = mode->height;
-	msg_history.reserve(100);
-	glfwSetErrorCallback(glfw_error_callback);
-	if (!glfwInit())
-		return 1;
-	const char* glsl_version = "#version 130";
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 
-	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
-	GLFWwindow* window = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "Chat", nullptr, nullptr);
-	if (window == nullptr)
-		return 1;
-	glfwMakeContextCurrent(window);
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-		std::cout << "Failed to initialize GLAD" << '\n';
-		return -1;
-	}
-	glfwSwapInterval(1); // Enable vsync
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO(); (void)io;
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-	ImGui::StyleColorsDark();
-	ImGuiStyle& style = ImGui::GetStyle();
-	style.ScaleAllSizes(main_scale);
-	style.FontScaleDpi = main_scale;
-
-	ImGui_ImplGlfw_InitForOpenGL(window, true);
-	ImGui_ImplOpenGL3_Init(glsl_version);
-	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-
-	running = false;
-
+void test_digest() {
 	EVP_MD_CTX* ctx = NULL;
 	EVP_MD* sha256 = NULL;
 	const unsigned char msg[] = {
@@ -2182,7 +2062,7 @@ int main(int argc, char* argv[])
 	/* Allocate the output buffer */
 	outdigest = static_cast<unsigned char*>(OPENSSL_malloc(EVP_MD_get_size(sha256)));
 	if (outdigest == NULL)
-	goto err;
+		goto err;
 
 	/* Now calculate the digest itself */
 	if (!EVP_DigestFinal_ex(ctx, outdigest, &len))
@@ -2201,6 +2081,538 @@ err:
 	if (ret != 0)
 		ERR_print_errors_fp(stderr);
 	//return ret;
+}
+
+//https://learn.microsoft.com/en-us/windows/win32/seccrypto/example-c-program-listing-the-certificates-in-a-store
+void MyHandleError(std::string psz)
+{
+	std::cout << "An error occurred in the program. \n";
+	std::cout << psz << "\n";
+	std::cout << "Error number " << GetLastError() << "\n";
+	std::cout << "Program terminating. \n";
+	exit(1);
+} // End of MyHandleError.
+
+typedef struct _ENUM_ARG {
+	BOOL fAll;
+	BOOL fVerbose;
+	DWORD dwFlags;
+	const void* pvStoreLocationPara;
+	HKEY hKeyBase;
+} ENUM_ARG, *PENUM_ARG;
+
+static BOOL WINAPI EnumPhyCallback(
+	const void* pvSystemStore,
+	DWORD dwFlags,
+	LPCWSTR pwszStoreName,
+	PCERT_PHYSICAL_STORE_INFO pStoreInfo,
+	void* pvReserved,
+	void* pvArg
+);
+
+static BOOL WINAPI EnumSysCallback(
+	const void* pvSystemStore,
+	DWORD dwFlags,
+	PCERT_SYSTEM_STORE_INFO pStoreInfo,
+	void* pvReserved,
+	void* pvArg
+);
+
+static BOOL WINAPI EnumLocCallback(
+	LPCWSTR pwszStoreLocation,
+	DWORD dwFlags,
+	void* pvReserved,
+	void* pvArg
+);
+static BOOL GetSystemName(
+	const void* pvSystemStore,
+	DWORD dwFlags,
+	PENUM_ARG pEnumArg,
+	LPCWSTR* ppwszSystemName
+) {
+	*ppwszSystemName = NULL;
+	if (pEnumArg->hKeyBase && 0 == (dwFlags & CERT_SYSTEM_STORE_RELOCATE_FLAG)) {
+		std::cout << "failed => RELOCATE_FLAG not set in callback.\n";
+		return FALSE;
+	}
+	else {
+		if (dwFlags & CERT_SYSTEM_STORE_RELOCATE_FLAG) {
+			PCERT_SYSTEM_STORE_RELOCATE_PARA pRelocatePara;
+			if (!pEnumArg->hKeyBase) {
+				MyHandleError("failed => RELOCATE_FLAG is set in callback");
+			}
+			pRelocatePara = (PCERT_SYSTEM_STORE_RELOCATE_PARA)
+				pvSystemStore;
+			if (pRelocatePara->hKeyBase != pEnumArg->hKeyBase) {
+				MyHandleError("wrong hKeyBase passed to callback");
+			}
+			*ppwszSystemName = pRelocatePara->pwszSystemStore;
+		}
+		else {
+			*ppwszSystemName = (LPCWSTR)pvSystemStore;
+		}
+	}
+	return TRUE;
+}
+
+static BOOL WINAPI EnumPhyCallback(
+	const void* pvSystemStore,
+	DWORD dwFlags,
+	LPCWSTR pwszStoreName,
+	PCERT_PHYSICAL_STORE_INFO pStoreInfo,
+	void* pvReserved,
+	void* pvArg
+) {
+	PENUM_ARG pEnumArg = (PENUM_ARG)pvArg;
+	LPCWSTR pwszSystemStore;
+	if (GetSystemName(
+		pvSystemStore,
+		dwFlags,
+		pEnumArg,
+		&pwszSystemStore
+	)) {
+		std::wcout << pwszStoreName << "\n";
+	}
+	else {
+		MyHandleError("GetSystemName failed.");
+	}
+	if (pEnumArg->fVerbose &&
+		(dwFlags & CERT_PHYSICAL_STORE_PREDEFINED_ENUM_FLAG)) {
+		std::cout << "	(implicitly created)\n";
+	}
+	return TRUE;
+}
+
+static BOOL WINAPI EnumSysCallback(
+	const void* pvSystemStore,
+	DWORD dwFlags,
+	PCERT_SYSTEM_STORE_INFO pStoreInfo,
+	void* pvReserved,
+	void* pvArg
+) {
+	PENUM_ARG pEnumArg = (PENUM_ARG)pvArg;
+	LPCWSTR pwszSystemStore;
+	static int line_counter = 0;
+	char x;
+
+	if (line_counter++ > 5) {
+		std::cout << "Enumeration of system store: press enter to continue.\n";
+		scanf("%c", &x);
+		line_counter = 0;
+	}
+
+	if (GetSystemName(pvSystemStore, dwFlags, pEnumArg, &pwszSystemStore)) {
+		std::wcout << pwszSystemStore << "\n";
+	}
+	else {
+		MyHandleError("GetSystemName failed.");
+	}
+	if (pEnumArg->fAll || pEnumArg->fVerbose) {
+		dwFlags &= CERT_SYSTEM_STORE_MASK;
+		dwFlags |= pEnumArg->dwFlags & ~CERT_SYSTEM_STORE_MASK;
+		if (!CertEnumPhysicalStore(
+			pvSystemStore,
+			dwFlags,
+			pEnumArg,
+			EnumPhyCallback
+		)) {
+			DWORD dwErr = GetLastError();
+			if (!(ERROR_FILE_NOT_FOUND == dwErr ||
+				ERROR_NOT_SUPPORTED == dwErr)) {
+				std::cout << "	CertEnumPhysicalStore\n";
+			}
+		}
+	}
+	return TRUE;
+}
+
+static BOOL WINAPI EnumLocCallback(
+	LPCWSTR pwszStoreLocation,
+	DWORD dwFlags,
+	void* pvReserved,
+	void* pvArg
+) {
+	PENUM_ARG pEnumArg = (PENUM_ARG)pvArg;
+	DWORD dwLocationID = (dwFlags & CERT_SYSTEM_STORE_LOCATION_MASK) >>
+		CERT_SYSTEM_STORE_LOCATION_SHIFT;
+	static int linecount = 0;
+	char x;
+
+	if (linecount++ > 5) {
+		std::cout << "enumeration of store locations: Press Enter to continue\n";
+		scanf("%c", &x);
+		linecount = 0;
+	}
+
+	std::wcout << "======= " << pwszStoreLocation << " ========\n";
+	if (pEnumArg->fAll) {
+		dwFlags &= CERT_SYSTEM_STORE_MASK;
+		dwFlags |= pEnumArg->dwFlags & ~CERT_SYSTEM_STORE_LOCATION_MASK;
+		CertEnumSystemStore(
+			dwFlags,
+			(void*)pEnumArg->pvStoreLocationPara,
+			pEnumArg,
+			EnumSysCallback
+		);
+	}
+	return TRUE;
+}
+void add_windows_root_certs(boost::asio::ssl::context& ctx) {
+	HCERTSTORE hStore = CertOpenSystemStore(0, "ROOT");
+	if (hStore == NULL) {
+		std::cout << "the store wasn't opened\n";
+		return;
+	}
+	std::cout << "the store was opened  :)\n";
+	X509_STORE* store = X509_STORE_new();
+	PCCERT_CONTEXT pContext = NULL;
+	char pszNameString[256];
+	while ((pContext = CertEnumCertificatesInStore(hStore, pContext)) != NULL) {
+		X509* x509 = d2i_X509(NULL,
+			(const unsigned char**)&pContext->pbCertEncoded,
+			pContext->cbCertEncoded);
+		if (x509 != NULL) {
+			if (CertGetNameString(
+				pContext,
+				CERT_NAME_SIMPLE_DISPLAY_TYPE,
+				0,
+				NULL,
+				pszNameString,
+				128
+			)) {
+				std::cout << "certificate for " << pszNameString << "\n";
+			}
+			X509_STORE_add_cert(store, x509);
+			X509_free(x509);
+		}
+	}
+	CertFreeCertificateContext(pContext);
+	CertCloseStore(hStore, 0);
+
+	SSL_CTX_set_cert_store(ctx.native_handle(), store);
+}
+void test_list_certs() {
+	DWORD dwExpectedError = 0;
+	DWORD dwLocationID = CERT_SYSTEM_STORE_CURRENT_USER_ID;
+	DWORD dwFlags = 0;
+	CERT_PHYSICAL_STORE_INFO PhyStoreInfo;
+	ENUM_ARG EnumArg;
+	LPSTR pszStoreParameters = NULL;
+	LPWSTR pwszStoreParameters = NULL;
+	LPWSTR pwszSystemName = NULL;
+	LPWSTR pwszPhysicalName = NULL;
+	LPWSTR pwszStoreLocationPara = NULL;
+	void* pvSystemName;
+	void* pvStoreLocationPara;
+	DWORD dwNameCnt = 0;
+	LPCSTR pszTestName;
+	HKEY hKeyRelocate = HKEY_CURRENT_USER;
+	LPSTR pszRelocate = NULL;
+	HKEY hKeyBase = NULL;
+
+	memset(&PhyStoreInfo, 0, sizeof(PhyStoreInfo));
+	PhyStoreInfo.cbSize = sizeof(PhyStoreInfo);
+	PhyStoreInfo.pszOpenStoreProvider = (LPSTR)sz_CERT_STORE_PROV_SYSTEM_W;
+	pszTestName = "Enum";
+	pvSystemName = pwszSystemName;
+	pvStoreLocationPara = pwszStoreLocationPara;
+
+	memset(&EnumArg, 0, sizeof(EnumArg));
+	EnumArg.dwFlags = dwFlags;
+	EnumArg.hKeyBase = hKeyBase;
+
+	EnumArg.pvStoreLocationPara = pvStoreLocationPara;
+	EnumArg.fAll = TRUE;
+	dwFlags &= ~CERT_SYSTEM_STORE_LOCATION_MASK;
+	dwFlags |= (dwLocationID << CERT_SYSTEM_STORE_LOCATION_SHIFT) &
+		CERT_SYSTEM_STORE_LOCATION_MASK;
+
+	std::cout << "begin enumeration of store locations\n";
+	if (CertEnumSystemStoreLocation(
+		dwFlags,
+		&EnumArg,
+		EnumLocCallback
+	)) {
+		std::cout << "finished enumerating store locations\n";
+	}
+	else {
+		MyHandleError("enumeration of locations failed");
+	}
+	std::cout << "begin enumeration of system stores\n";
+	if (CertEnumSystemStore(
+		dwFlags,
+		pvStoreLocationPara,
+		&EnumArg,
+		EnumSysCallback
+	)) {
+		std::cout << "finished enumerating system stores\n";
+	}
+	else {
+		MyHandleError("enumeration of system stores failed.");
+	}
+	std::cout << "\n\nenumerate the physical stores for the MY system store\n";
+	if (CertEnumPhysicalStore(
+		L"MY",
+		dwFlags,
+		&EnumArg,
+		EnumPhyCallback
+	)) {
+		std::cout << "finished enumeration of physical stores.\n";
+	}
+	else {
+		MyHandleError("enumeration of physical stores failed.");
+	}
+}
+void test_open_cert_store() {
+	HCERTSTORE hCertStore;
+	PCCERT_CONTEXT pCertContext = NULL;
+	char pszNameString[256];
+	char pszStoreName[256];
+	void* pvData;
+	DWORD cbData;
+	DWORD dwPropId = 0;
+
+	std::string name;
+	std::cout << "enter store name:";
+	std::cin >> pszStoreName;
+	std::cout << "the store name is " << name << "\n";
+	if (hCertStore = CertOpenSystemStore(NULL, pszStoreName)) {
+		std::cout << "the " << pszStoreName << " has been opened\n";
+	}
+	else {
+		//std::cout << "the store wasn't opened\n";
+		MyHandleError("The store was not opened");
+		//return;
+	}
+	// pCertContext = NULL;
+	while (pCertContext = CertEnumCertificatesInStore(
+		hCertStore,
+		pCertContext
+	)) {
+		if (CryptUIDlgViewContext(
+			CERT_STORE_CERTIFICATE_CONTEXT,
+			pCertContext,
+			NULL,
+			NULL,
+			0,
+			NULL)) {
+			std::cout << "OK\n";
+		}
+		else {
+			MyHandleError("UI failed");
+			//continue;
+		}
+		if (CertGetNameString(
+			pCertContext,
+			CERT_NAME_SIMPLE_DISPLAY_TYPE,
+			0,
+			NULL,
+			pszNameString,
+			128
+		)) {
+			std::cout << "certificate for " << pszNameString << "\n";
+		}
+		else {
+			MyHandleError("CertGetName failed.");
+			//continue;
+		}
+		while (dwPropId = CertEnumCertificateContextProperties(
+			pCertContext,
+			dwPropId
+		)) {
+			std::cout << "property # " << dwPropId << " found->\n";
+			switch (dwPropId) {
+			case CERT_FRIENDLY_NAME_PROP_ID:
+			{
+				std::cout << "display name:\n";
+				break;
+			}
+			case CERT_SIGNATURE_HASH_PROP_ID:
+			{
+				std::cout << "signature hash identifier:\n";
+				break;
+			}
+			case CERT_KEY_PROV_HANDLE_PROP_ID:
+			{
+				std::cout << "KEY PROVE HANDLE\n";
+				break;
+			}
+			case CERT_KEY_PROV_INFO_PROP_ID:
+			{
+				std::cout << "KEY PROV INFO PROP ID\n";
+				break;
+			}
+			case CERT_SHA1_HASH_PROP_ID:
+			{
+				std::cout << "SHA1 HASH identifier\n";
+				break;
+			}
+			case CERT_MD5_HASH_PROP_ID:
+			{
+				std::cout << "md5 hash identifier\n";
+				break;
+			}
+			case CERT_KEY_CONTEXT_PROP_ID:
+			{
+				std::cout << "KEY CONTEXT PROP identifier\n";
+				break;
+			}
+			case CERT_KEY_SPEC_PROP_ID:
+			{
+				std::cout << "KEY SPEC PROP identifier\n";
+				break;
+			}
+			case CERT_ENHKEY_USAGE_PROP_ID:
+			{
+				std::cout << "ENHKEY USAGE PROP identifier\n";
+				break;
+			}
+			case CERT_NEXT_UPDATE_LOCATION_PROP_ID:
+			{
+				std::cout << "NEXT UPDATE LOCATION PROP identifier\n";
+				break;
+			}
+			case CERT_PVK_FILE_PROP_ID:
+			{
+				std::cout << "PVK FILE PROP identifier\n";
+				break;
+			}
+			case CERT_DESCRIPTION_PROP_ID:
+			{
+				std::cout << "DESCRIPTION PROP identifier\n";
+				break;
+			}
+			case CERT_ACCESS_STATE_PROP_ID:
+			{
+				std::cout << "ACCESS STATE PROP identifier\n";
+				break;
+			}
+			case CERT_SMART_CARD_DATA_PROP_ID:
+			{
+				std::cout << "SMART CARD DATA PROP identifier\n";
+				break;
+			}
+			case CERT_EFS_PROP_ID:
+			{
+				std::cout << "EFS PROP identifier\n";
+				break;
+			}
+			case CERT_FORTEZZA_DATA_PROP_ID:
+			{
+				std::cout << "FORTEZZA DATA PROP identifier\n";
+				break;
+			}
+			case CERT_ARCHIVED_PROP_ID:
+			{
+				std::cout << "ARCHIVED PROP identifier\n";
+				break;
+			}
+			case CERT_KEY_IDENTIFIER_PROP_ID:
+			{
+				std::cout << "KEY IDENTIFIER PROP identifier\n";
+				break;
+			}
+			case CERT_AUTO_ENROLL_PROP_ID:
+			{
+				std::cout << "AUTO ENROLL PROP identifier\n";
+				break;
+			}
+			}
+			if (CertGetCertificateContextProperty(
+				pCertContext,
+				dwPropId,
+				NULL,
+				&cbData
+			)) {
+			}
+			else {
+				std::cout << "call #1 to GetCertContextProperty failed\n";
+				//continue;
+			}
+			if (pvData = (void*)malloc(cbData)) {
+				//memory allocated. continue
+			}
+			else {
+				std::cout << "memory allocation failed\n";
+				//continue;
+			}
+			if (CertGetCertificateContextProperty(
+				pCertContext,
+				dwPropId,
+				pvData,
+				&cbData
+			)) {
+				//data retrieved
+			}
+			else {
+				MyHandleError("call #2 failed");
+				//continue;
+			}
+			std::cout << "the property content is " << pvData << "\n";
+			free(pvData);
+		}
+	}
+	if (!(pCertContext = CryptUIDlgSelectCertificateFromStore(
+		hCertStore,
+		NULL,
+		NULL,
+		NULL,
+		CRYPTUI_SELECT_LOCATION_COLUMN,
+		0,
+		NULL
+	))) {
+		MyHandleError("select UI failed");
+		//continue;
+	}
+
+	CertFreeCertificateContext(pCertContext);
+	CertCloseStore(hCertStore, 0);
+	std::cout << "function completed successfully\n";
+}
+int main(int argc, char* argv[])
+{	 
+	boost::asio::ssl::context ssl_io_context(boost::asio::ssl::context::tlsv12_client);
+	add_windows_root_certs(ssl_io_context);
+	//test_open_cert_store();
+	//mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+	//screenWidth = mode->width;
+	//screenHeight = mode->height;
+	msg_history.reserve(100);
+	glfwSetErrorCallback(glfw_error_callback);
+	if (!glfwInit())
+		return 1;
+	const char* glsl_version = "#version 130";
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+
+	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
+	GLFWwindow* window = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "Chat", nullptr, nullptr);
+	if (window == nullptr)
+		return 1;
+	glfwMakeContextCurrent(window);
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+		std::cout << "Failed to initialize GLAD" << '\n';
+		return -1;
+	}
+	glfwSwapInterval(1); // Enable vsync
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+	ImGui::StyleColorsDark();
+	ImGuiStyle& style = ImGui::GetStyle();
+	style.ScaleAllSizes(main_scale);
+	style.FontScaleDpi = main_scale;
+
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init(glsl_version);
+	ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+	running = false;
+
+	//test_list_certs();
+	//test_open_cert_store();
 
 	try {
 		/*if (argc != 3) {
@@ -2209,6 +2621,7 @@ err:
 		}*/
 		boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv13);
 		boost::asio::io_context io_context;
+		
 
 		std::string ip = "159.89.49.248";
 		std::string port = "5000";
