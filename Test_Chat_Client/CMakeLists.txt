@@ -31,6 +31,8 @@ target_include_directories(Test_Chat_Client PRIVATE
 "${GLOBAL_INCLUDE_DIR}"
 "${PROJECT_INCLUDE_DIR}"
 "C:/Boost/include/boost-1_89/"
+
+"${GLOBAL_INCLUDE_DIR}/openssl/include"
 )
 
 #target_compile_definitions(Test_Chat_Client PRIVATE OPENSSL_NO_DYNAMIC_ENGINE)
@@ -38,7 +40,7 @@ target_include_directories(Test_Chat_Client PRIVATE
 
 set(OPUS_DEBUG_LIB "${GLOBAL_INCLUDE_DIR}/opus/build/Debug/opus.lib")
 set(OPUS_RELEASE_LIB "${GLOBAL_INCLUDE_DIR}/opus/build/Release/opus.lib")
-set(BOOST_LIB_DIR "${GLOBAL_INCLUDE_DIR}/boost_1_89_0/_build/stage/lib/Debug")
+set(BOOST_LIB_DIR "${GLOBAL_INCLUDE_DIR}/boost_1_89_0/_build/stage/lib")
 
 target_link_libraries(Test_Chat_Client PRIVATE
 	$<$<CONFIG:DEBUG>:
