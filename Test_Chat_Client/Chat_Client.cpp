@@ -284,8 +284,9 @@ class chat_client : public std::enable_shared_from_this<chat_client>
 public:
 	using client_ptr = std::shared_ptr<chat_client>;
 	static client_ptr create(boost::asio::io_context& io_context,
+		boost::asio::ssl::context& ssl_context,
 		const tcp::resolver::results_type& endpoints, GLFWwindow* window) {
-		return client_ptr(new chat_client(io_context, endpoints,
+		return client_ptr(new chat_client(io_context, ssl_context, endpoints,
 			window));
 	}
 
@@ -424,11 +425,23 @@ public:
 	}
 	void try_reconnect() {
 		if(!socket_->is_open()){
-			socket_ = std::make_unique<tcp::socket>(io_context_);
+			socket_ = std::make_shared<tcp::socket>(io_context_);
 			socket_->open(boost::asio::ip::tcp::v4()); // reuse same io_ctx			
 		}
 		state = client_state::connecting;
 		do_connect(endpoints);
+	}
+	void try_reconnect_ssl() {
+		if (!ssl_socket_->lowest_layer().is_open()) {
+			socket_ = std::make_shared<tcp::socket>(io_context_);
+			socket_->open(tcp::v4());
+			ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket&>>(*socket_, ssl_context_);
+			ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
+			ssl_socket_->set_verify_callback(
+				std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));		
+		}
+		state = client_state::connecting;
+		do_connect_ssl(endpoints);
 	}
 	void send_ready_notification() {
 		chat_message msg;
@@ -845,6 +858,49 @@ private:
 				}
 			});
 	}
+	void do_connect_ssl(const tcp::resolver::results_type& endpoints) {
+		boost::asio::async_connect(ssl_socket_->lowest_layer(), endpoints,
+			[this](const boost::system::error_code& error,
+				const tcp::endpoint& /*endpoint*/) {
+					if (!error) {
+						retry_delay = 1;
+						state = client_state::ready;
+						timer_->cancel();
+						handshake();
+					}
+					else {
+						retry_delay = std::min(retry_delay * 2, max_delay);
+						timer_->expires_after(std::chrono::seconds(retry_delay));
+						timer_->async_wait([this](boost::system::error_code ec) {
+							if (ec == boost::asio::error::operation_aborted) {
+								return;
+							}
+							try_reconnect_ssl();
+							});
+						std::cout << "connect failed: " << error.message() << "\n";
+					}
+		});
+	}
+	bool verify_certificate(bool preverified,
+		boost::asio::ssl::verify_context& ctx) {
+		char subject_name[256];
+		X509* cert = X509_STORE_CTX_get_current_cert(ctx.native_handle());
+		X509_NAME_oneline(X509_get_subject_name(cert), subject_name, 256);
+		std::cout << "verifying " << subject_name << "\n";
+		return preverified;
+	}
+	void handshake() {
+		ssl_socket_->async_handshake(boost::asio::ssl::stream_base::client,
+			[this](const boost::system::error_code& error) {
+				if (!error) {
+					do_read_header();
+				}
+				else {
+					state = client_state::awaiting_connection;
+					std::cout << "handshake failed: " << error.message() << "\n";
+				}
+			});
+	}
 	void do_read_header() {
 		boost::asio::async_read(*socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
@@ -867,6 +923,25 @@ private:
 					participant_client_map.clear();
 				}
 			});
+	}
+	void do_read_header_ssl() {
+		boost::asio::async_read(*ssl_socket_,
+			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
+			[this](boost::system::error_code ec, std::size_t) {
+				if (!ec && read_msg_.decode_header()) {
+					do_read_body_ssl();
+				}
+				else {
+					state = client_state::awaiting_connection;
+					ssl_socket_->lowest_layer().close();
+					msg_history.clear();
+					participant_names.clear();
+					participants.clear();
+					participant_map.clear();
+					participant_client_map.clear();
+				}
+			}
+		);
 	}
 	void do_read_body() {
 		boost::asio::async_read(*socket_,
@@ -891,7 +966,28 @@ private:
 				}
 			});
 	}
-
+	void do_read_body_ssl() {
+		boost::asio::async_read(*ssl_socket_,
+			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
+			[this](boost::system::error_code ec, std::size_t) {
+				if (!ec) {
+					std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
+					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					process_msg_type(read_msg_);
+				}
+				else {
+					//std::cout << "server disconnect body: " << ec.message() << "\n";
+					state = client_state::awaiting_connection;
+					ssl_socket_->lowest_layer().close();
+					msg_history.clear();
+					participant_names.clear();
+					participants.clear();
+					participant_map.clear();
+					participant_client_map.clear();
+				}
+			});
+	}
 	void do_write() {
 		boost::asio::async_write(*socket_,
 			boost::asio::buffer(write_msgs_.front().data(),
@@ -940,6 +1036,39 @@ private:
 			}
 		);
 	}
+	void do_write_ssl() {
+		boost::asio::async_write(*ssl_socket_,
+			boost::asio::buffer(write_msgs_.front().data(), write_msgs_.front().length()),
+			[this](boost::system::error_code ec, std::size_t) {
+				std::string header = std::string(write_msgs_.front().data(), chat_message::header_length);
+				std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
+				//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+				if (!ec) {
+					if (write_msgs_.front().msg_type == message_type::ready_notification) {
+						state = client_state::awaiting_authentication;
+					}
+					if (write_msgs_.front().msg_type == message_type::authentication_response) {
+						std::string auth_body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
+						state = client_state::awaiting_authentication;
+					}
+					write_msgs_.pop_front();
+					if (!write_msgs_.empty()) {
+						do_write_ssl();
+					}
+				}
+				else {
+					//std::cout << "server disconnect do_write: " << ec.message() << "\n";
+					state = client_state::awaiting_connection;
+					ssl_socket_->lowest_layer().close();
+					msg_history.clear();
+					participant_names.clear();
+					participants.clear();
+					participant_map.clear();
+					participant_client_map.clear();
+				}
+			}
+		);
+	}
 	void add_message(const std::string& msg) {
 		msgs.push_back(msg);
 		scroll_to_bottom = true;
@@ -947,7 +1076,9 @@ private:
 private:
 	GLFWwindow* window;
 	boost::asio::io_context& io_context_;
+	boost::asio::ssl::context& ssl_context_;
 	std::shared_ptr<tcp::socket> socket_;
+	std::unique_ptr <boost::asio::ssl::stream<tcp::socket&>> ssl_socket_;//must come after socket_ and ssl_context_
 	uint16_t udp_port_server;
 	uint16_t udp_port_client;
 	std::shared_ptr<udp::socket> udp_socket;
@@ -965,12 +1096,17 @@ private:
 	ma_context ma_playback_context;
 	std::array<uint8_t, 1500>recv_buffer_;
 	chat_client(boost::asio::io_context& io_context,
+		boost::asio::ssl::context& ssl_context,
 		const tcp::resolver::results_type& endpoints, GLFWwindow* window)
-		: io_context_(io_context), socket_(std::make_shared<tcp::socket>(io_context)),
+		: io_context_(io_context), ssl_context_(ssl_context), socket_(std::make_shared<tcp::socket>(io_context)),
 		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), 0))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, me()
-	{
+	{	
+		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket&>>(*socket_, ssl_context_);
+		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
+		ssl_socket_->set_verify_callback(
+			std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));
 		me.id = 0;
 		init_capture();
 		init_playback();
@@ -2571,8 +2707,7 @@ void test_open_cert_store() {
 }
 int main(int argc, char* argv[])
 {	 
-	boost::asio::ssl::context ssl_io_context(boost::asio::ssl::context::tlsv12_client);
-	add_windows_root_certs(ssl_io_context);
+	//add_windows_root_certs(ssl_io_ctx);
 	//test_open_cert_store();
 	//mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
 	//screenWidth = mode->width;
@@ -2619,16 +2754,17 @@ int main(int argc, char* argv[])
 			std::cerr << "Usage: chat_client <host> <port> \n";
 			return 1;
 		}*/
-		boost::asio::ssl::context ssl_ctx(boost::asio::ssl::context::tlsv13);
-		boost::asio::io_context io_context;
-		
+		boost::asio::ssl::context ssl_context(boost::asio::ssl::context::sslv23);//tlsv12_client
+		ssl_context.set_verify_mode(boost::asio::ssl::verify_peer);
+		ssl_context.load_verify_file("C:/Users/rosse/Documents/isrg_cert.pem");
+		boost::asio::io_context io_context;		
 
 		std::string ip = "159.89.49.248";
 		std::string port = "5000";
 		tcp::resolver resolver(io_context);
 		//auto endpoints = resolver.resolve(argv[1], argv[2]);
 		auto endpoints = resolver.resolve(ip, port);
-		std::shared_ptr<chat_client> c = chat_client::create(io_context, endpoints, window);
+		std::shared_ptr<chat_client> c = chat_client::create(io_context, ssl_context, endpoints, window);
 		c->server_ip = ip;
 
 		std::thread t([&io_context]() { io_context.run(); });
