@@ -1,3 +1,4 @@
+//test build
 #include <cstdlib>
 #include <cstdint>
 #include <deque>
@@ -571,8 +572,9 @@ public:
 		awaiting_name,
 		active
 	};
-	chat_session(tcp::socket socket, tcp::endpoint tcp_endpoint, std::shared_ptr<udp::socket> udp_socket,
-		udp::endpoint udp_endpoint, unsigned short client_port,  std::shared_ptr<chat_room> room, boost::asio::io_context& io_context):
+	chat_session(boost::asio::ssl::stream<tcp::socket> ssl_socket, tcp::socket socket, tcp::endpoint tcp_endpoint, std::shared_ptr<udp::socket> udp_socket,
+		udp::endpoint udp_endpoint, unsigned short client_port, std::shared_ptr<chat_room> room, boost::asio::io_context& io_context) :
+		ssl_socket_(std::move(ssl_socket)),
 		socket_(std::move(socket)),
 		tcp_endpoint_{tcp_endpoint},
 		udp_socket_{udp_socket},
@@ -613,8 +615,14 @@ public:
 		state_ = session_state::wait;
 		authenticated = false;
 		id = 0;
-		do_read_header(); 
+		//do_read_header(); 
+		start_ssl();
 	}
+
+	void start_ssl() {
+		do_handshake();
+	}
+
 	void start() {
 		chat_message prompt;
 		std::string text = "Enter name:";
@@ -744,9 +752,11 @@ public:
 		if (!write_in_progress)
 		{
 			//std::cout << "do_write()\n";
-			do_write();
+			//do_write();
+			do_write_ssl();
 		}
 	}
+
 private:
 	std::string generate_token() {
 		std::array<uint8_t, 12> bytes;
@@ -817,7 +827,42 @@ private:
 		validation.encode_header();
 		deliver(validation);
 	}
+	void do_handshake() {
+		std::cout << "do_handshake()\n";
+		auto self(shared_from_this());
+		std::cout << "start handshake\n";
+		ssl_socket_.async_handshake(boost::asio::ssl::stream_base::server,
+			[this, self](const boost::system::error_code& ec) {
+				if (!ec) {
+					std::cout << "handshake success\n";
+					do_read_header_ssl();
+				}
+				else {
+					std::cout << "handshake fail: " << ec.message() << "\n";
+				}
+		});
+	}
+	void do_read_header_ssl() {
+		std::cout << "do_read_header_ssl\n";
+		auto self(shared_from_this());
+		boost::asio::async_read(ssl_socket_,
+			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
+			[this, self](boost::system::error_code ec, std::size_t)
+			{
+				if (!ec && read_msg_.decode_header()) {
+					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					//std::cout << "read_msg_header[" << header << "]\n";					
+					do_read_body_ssl();
+
+				}
+				else {
+					std::cerr << "read error: " << ec.message() << "\n";
+					room_->leave(shared_from_this());
+				}
+			});
+	}
 	void do_read_header() {
+		std::cout << "do_read_header()\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
@@ -835,7 +880,122 @@ private:
 				}
 		});
 	}
+	void do_read_body_ssl() {
+		std::cout << "do_read_body_ssl()\n";
+		auto self(shared_from_this());
+		boost::asio::async_read(ssl_socket_,
+			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
+			[this, self](boost::system::error_code ec, std::size_t)
+			{
+				if (!ec) {
+					std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
+					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					//validate client is authorized!! TODO
+					if (!authenticated) {
+						if (verify_authorization_response(read_msg_)) {
+							chat_message m;
+							m.body_length(session_token.length());//16 bytes/chars
+							m.set_message_type(message_type::authentication_approve);
+							std::memcpy(m.body(), session_token.c_str(), m.body_length());
+							m.encode_header();
+							deliver(m);
+							authenticated = true;
+						}
+						else {
+							send_authentication_request();
+							authenticated = false;
+							//room_->leave(shared_from_this());
+						}
+						do_read_header_ssl();
+						return;
+
+					}
+					switch (read_msg_.msg_type) {
+						/*case(message_type::ready_notification): {
+							if (state_ == session_state::wait) {
+								send_authentication_request();
+							}
+							break;
+						}*/
+	
+					case(message_type::start_room_request): {
+						if (authenticated) {
+							if (room_->check_room_full()) {
+								reject();
+							}
+							else {
+								start();
+							}
+						}
+						break;
+					}
+					case(message_type::name_change_request): {
+						state_ = session_state::awaiting_name;
+						//name is preceded by uint8_t id
+						std::string name(read_msg_.body() + sizeof(uint8_t), read_msg_.body_length() - sizeof(uint8_t));
+						room_->leave(shared_from_this());
+						if (!name.empty()) {
+							uint8_t id = 0;
+							std::memcpy(&id, read_msg_.body(), sizeof(uint8_t));
+							change_name(name);
+							//std::cout << "name changed\n";
+							this->id = id;
+							room_->join(shared_from_this());
+							room_->update_client_participants();
+						}
+					}
+														   break;
+					case(message_type::chat): {
+						std::string full_msg = name + ": ";
+						full_msg.append(read_msg_.body(), read_msg_.body_length());
+						read_msg_.body_length(full_msg.length());
+						memcpy(read_msg_.body(), full_msg.c_str(), read_msg_.body_length());
+						read_msg_.encode_header();
+						room_->deliver(read_msg_);
+						break;
+					}
+					case(message_type::send_vc_request): {
+						room_->send_vc_request(read_msg_);
+						break;
+					}
+					case(message_type::reject_vc_request): {
+						room_->reject_vc_request(read_msg_);
+						break;
+					}
+					case(message_type::accept_vc_request): {
+						room_->accept_vc_request(read_msg_);
+						break;
+					}
+					case(message_type::send_udp_port): {
+						//std::cout << "got send_udp_port\n";
+						store_client_udp_port(read_msg_);//TODO code review this
+						break;
+					}
+					case(message_type::mic_test): {
+						room_->accept_mic_check_request(read_msg_);
+						break;
+					}
+					case(message_type::end_vc): {
+						//room_->send_vc_leave_notification(shared_from_this());
+						//room_->send_vc_leave_notifications(shared_from_this());
+						room_->leave_vc_room(shared_from_this());
+						break;
+					}
+
+					}
+					do_read_header_ssl();
+				}
+				else {
+					std::cerr << "Write error: " << ec.message() << "\n";
+					room_->leave(shared_from_this());
+					authenticated = false;
+				}
+			}
+		);
+	}
 	void do_read_body() {
+		std::cout << "do_read_body()\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
@@ -948,8 +1108,36 @@ private:
 			}
 		);
 	}
+	void do_write_ssl() {
+		std::cout << "do_write_ssl()\n";
+		auto self(shared_from_this());
+		auto msg = write_msgs_.front();
+		boost::asio::async_write(ssl_socket_,
+			//boost::asio::buffer(write_msgs_.front().data(), 
+			//write_msgs_.front().length()),
+			boost::asio::buffer(msg.data(),
+				msg.length()),
+			[this, self, msg](boost::system::error_code ec, std::size_t)
+			{
+				if (!ec) {
+					std::string header = std::string(msg.data(), chat_message::header_length);
+					std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
+					//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+						//std::cout << "!ec\n";
+					write_msgs_.pop_front();
+					if (!write_msgs_.empty()) {
+						do_write_ssl();
+					}
+				}
+				else {
+					std::cerr << "Write error: " << ec.message() << "\n";
+					room_->leave(shared_from_this());
+				}
+			}
+		);
+	}
 	void do_write(){
-		//std::cout << "do_write() start\n";
+		std::cout << "do_write()\n";
 		auto self(shared_from_this());
 		auto msg = write_msgs_.front();
 		boost::asio::async_write(socket_,
@@ -976,6 +1164,7 @@ private:
 			}
 		);
 	}
+	boost::asio::ssl::stream<tcp::socket> ssl_socket_;
 	tcp::socket socket_;
 	std::shared_ptr<chat_room> room_;
 	chat_message read_msg_;
@@ -998,10 +1187,22 @@ public:
 		const tcp::endpoint& endpoint, udp::endpoint& udp_endpoint) : acceptor_(io_context, endpoint),
 		udp_socket_(std::make_shared<udp::socket>(io_context, udp_endpoint)),
 		udp_endpoint_(udp_endpoint), room_(std::make_shared<chat_room>(udp_socket_, udp_endpoint_, io_context)),
-		io_context_{io_context}
+		io_context_{ io_context }, ssl_context_{boost::asio::ssl::context::tls_server}
 	{
-		do_accept();
-		do_receive();
+		ssl_context_.set_options(
+			boost::asio::ssl::context::default_workarounds
+			| boost::asio::ssl::context::no_sslv2
+			| boost::asio::ssl::context::no_sslv3
+			| boost::asio::ssl::context::no_tlsv1
+			| boost::asio::ssl::context::no_tlsv1_1
+		);
+		//only needed for encrypted private keys. let's encrypt not private key is not encrypted.
+		//ssl_context_.set_password_callback(std::bind(&chat_server::get_password, this));
+		ssl_context_.use_certificate_chain_file("/etc/letsencrypt/live/magoogan.duckdns.org/fullchain.pem");
+		ssl_context_.use_private_key_file("/etc/letsencrypt/live/magoogan.duckdns.org/privkey.pem", boost::asio::ssl::context::pem);
+		//do_accept();
+		do_accept_ssl();
+		//do_receive();
 	}
 	void do_receive() {
 		if (udp_socket_ != nullptr) {
@@ -1009,6 +1210,25 @@ public:
 		}
 	}
 private:
+	std::string get_password() const {
+		return "test";
+	}
+	void do_accept_ssl() {
+		acceptor_.async_accept(
+			[this](const boost::system::error_code& ec, tcp::socket socket) {
+				tcp::endpoint remote_ep = socket.remote_endpoint();
+				boost::asio::ip::address ip = remote_ep.address();
+				std::string client_ip = ip.to_string();
+				unsigned short client_port = remote_ep.port();
+				std::cout << "tcp connection from [" << client_ip << "] on port[" << client_port << "]\n";
+				if (!ec) {
+					std::make_shared<chat_session>(boost::asio::ssl::stream<tcp::socket>(std::move(socket), ssl_context_),
+						std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->wait_for_ready();
+				}
+				do_accept_ssl();
+			}
+			);
+	}
 	void do_accept() {
 		acceptor_.async_accept(
 			[this](boost::system::error_code ec, tcp::socket socket) 
@@ -1019,7 +1239,7 @@ private:
 				unsigned short client_port = remote_ep.port();
 				std::cout << "tcp connection from [" << client_ip << "] on port[" << client_port << "]\n";
 				if (!ec) {
-					std::make_shared<chat_session>(std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->wait_for_ready();
+					//std::make_shared<chat_session>(std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->wait_for_ready();
 				}
 				do_accept();
 			}); 
@@ -1096,7 +1316,7 @@ private:
 		//std::cout << "accept udp connection w/ token: " << recv_vc_msg_->token << "\n";
 		return true;
 	}
-
+	boost::asio::ssl::context ssl_context_;
 	boost::asio::io_context& io_context_;
 	tcp::acceptor acceptor_;
 	std::shared_ptr<udp::socket> udp_socket_;
@@ -1105,66 +1325,7 @@ private:
 	std::shared_ptr<chat_room> room_;
 	std::unordered_set<std::string> ips;
 };
-class voice_chat_session : public voice_chat_participant,
-	public std::enable_shared_from_this<voice_chat_session>
-{
-public:
-	voice_chat_session(std::shared_ptr<udp::socket> socket, udp::endpoint remote_endpoint) :
-		socket_{ socket }, remote_endpoint_{remote_endpoint}
-	{
-	}
-	void deliver(uint8_t* recv_buffer, uint8_t sender_id, uint16_t len) {
-		bool write_in_progress = !write_vc_msgs.empty();
-		packet p;
-		p.size = len;
-		p.data = std::make_unique<uint8_t[]>(len);
-		std::memcpy(p.data.get(), recv_buffer, len);
-		write_packets.push_back(std::move(p));
-		if (!write_in_progress) {
-			do_send();
-		}
-	}
-	void set_id(uint8_t id) {
-		id = id;
-	}
-	uint8_t get_id() {
-		return id;
-	}
-private:
-	void do_send() {
-		socket_->async_send_to(boost::asio::buffer(write_packets.front().data.get(), write_vc_msgs.front().body_length()),
-			remote_endpoint_, std::bind(
-				&voice_chat_session::handle_send, this, write_vc_msgs.front(),
-				boost::asio::placeholders::error,
-				boost::asio::placeholders::bytes_transferred));
-	}
-	void handle_send(voice_chat_message vc_msg,
-		const boost::system::error_code& ec,
-		std::size_t msg_size) {
-		if (!ec) {
-			write_vc_msgs.pop_front();
-			if (!write_vc_msgs.empty()) {
-				do_send();
-			}
-		}
-		else {
-			std::cerr << "Write error: " << ec.message() << "\n";
-			//room_.leave(shared_from_this());
-		}		
-	}
-	void add_participant(uint8_t id) {
-		ids.emplace(id);
-	}
-	udp::endpoint remote_endpoint_;
-	std::shared_ptr<udp::socket> socket_;
-	//std::array<char, voice_chat_message::max_body_length> recv_buffer_;
-	//TODO 
-	//create a shared_ptr to the session manager in chat_session and voice_chat_session
-	uint8_t id;
-	std::set<uint8_t> ids;//don't put participants in here.
-	vc_message_queue write_vc_msgs;
-	packet_queue write_packets;
-};
+
 int main(int argc, char* argv[]){
 	try{
 		if (argc < 2) {

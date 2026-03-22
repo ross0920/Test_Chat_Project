@@ -444,13 +444,30 @@ public:
 		do_connect_ssl(endpoints);
 	}
 	void send_ready_notification() {
+		std::cout << "send_ready_notification\n";
 		chat_message msg;
 		std::string text = "ready";
 		msg.body_length(text.length());
 		msg.set_message_type(message_type::ready_notification);
 		std::memcpy(msg.body(), text.c_str(), msg.body_length());
 		msg.encode_header();
-		write(msg);
+		//write(msg);
+		write_ssl(msg);
+	}
+	void write_ssl(const chat_message& msg) {
+		boost::asio::post(io_context_,
+			[this, msg]()
+			{
+				bool write_in_progress = !write_msgs_.empty();
+				write_msgs_.push_back(msg);
+				if (write_msgs_.front().msg_type == message_type::name_change_request) {
+					//TODO
+					//return;
+				}
+				if (!write_in_progress) {
+					do_write_ssl();
+				}
+			});
 	}
 	void write(const chat_message& msg) {
 		boost::asio::post(io_context_,
@@ -594,7 +611,8 @@ private:
 		std::memcpy(auth.body(), key.c_str(), auth.body_length());
 		auth.encode_header();
 		std::string auth_string = std::string(auth.body(), auth.body_length());
-		write(auth);
+		//write(auth);
+		write_ssl(auth);
 	}
 	std::string decode_session_token(chat_message& m) {
 		if (m.body_length() < sizeof(uint8_t)) { return "bad"; }
@@ -608,7 +626,8 @@ private:
 		msg.set_message_type(message_type::start_room_request);
 		std::memcpy(msg.body(), text.c_str(), msg.body_length());
 		msg.encode_header();
-		write(msg);
+		//write(msg);
+		write_ssl(msg);
 	}
 	void read_id(chat_message& m) {
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
@@ -620,7 +639,8 @@ private:
 		msg.set_message_type(message_type::send_udp_port);
 		std::memcpy(msg.body(), port.data(), msg.body_length());
 		msg.encode_header();
-		write(msg);
+		//write(msg);
+		write_ssl(msg);
 	}
 	void receive_vc_request(chat_message& m) {
 		uint8_t sender_id = 0;
@@ -864,7 +884,9 @@ private:
 				const tcp::endpoint& /*endpoint*/) {
 					if (!error) {
 						retry_delay = 1;
-						state = client_state::ready;
+						//do not set ready state until handshake is completed. it will send message to server expecting a tls handshake and cause
+						// that handshake to fail.
+						//state = client_state::ready; 
 						timer_->cancel();
 						handshake();
 					}
@@ -890,10 +912,13 @@ private:
 		return preverified;
 	}
 	void handshake() {
+		std::cout << "start handshake\n";
 		ssl_socket_->async_handshake(boost::asio::ssl::stream_base::client,
 			[this](const boost::system::error_code& error) {
 				if (!error) {
-					do_read_header();
+					std::cout << "handshake succeed\n";
+					state = client_state::ready;
+					do_read_header_ssl();
 				}
 				else {
 					state = client_state::awaiting_connection;
@@ -902,6 +927,7 @@ private:
 			});
 	}
 	void do_read_header() {
+		std::cout << "do_read_header()\n";
 		boost::asio::async_read(*socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t/*length*/) {
@@ -925,13 +951,16 @@ private:
 			});
 	}
 	void do_read_header_ssl() {
+		std::cout << "do_read_header_ssl()\n";
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t) {
+				std::cout << "decode_header()\n";
 				if (!ec && read_msg_.decode_header()) {
 					do_read_body_ssl();
 				}
 				else {
+					std::cout << "decode_header fail\n";
 					state = client_state::awaiting_connection;
 					ssl_socket_->lowest_layer().close();
 					msg_history.clear();
@@ -944,6 +973,7 @@ private:
 		);
 	}
 	void do_read_body() {
+		std::cout << "do_read_body()\n";
 		boost::asio::async_read(*socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this](boost::system::error_code ec, std::size_t /*length*/)
@@ -967,6 +997,7 @@ private:
 			});
 	}
 	void do_read_body_ssl() {
+		std::cout << "do_read_body_ssl()\n";
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this](boost::system::error_code ec, std::size_t) {
@@ -989,6 +1020,7 @@ private:
 			});
 	}
 	void do_write() {
+		std::cout << "do_write()\n";
 		boost::asio::async_write(*socket_,
 			boost::asio::buffer(write_msgs_.front().data(),
 				write_msgs_.front().length()),
@@ -1037,12 +1069,13 @@ private:
 		);
 	}
 	void do_write_ssl() {
+		std::cout << "do_write_ssl()\n";
 		boost::asio::async_write(*ssl_socket_,
 			boost::asio::buffer(write_msgs_.front().data(), write_msgs_.front().length()),
 			[this](boost::system::error_code ec, std::size_t) {
 				std::string header = std::string(write_msgs_.front().data(), chat_message::header_length);
 				std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
-				//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+				std::cout << "write msg header[" << header << "] body [" << body << "]\n";
 				if (!ec) {
 					if (write_msgs_.front().msg_type == message_type::ready_notification) {
 						state = client_state::awaiting_authentication;
@@ -1057,7 +1090,7 @@ private:
 					}
 				}
 				else {
-					//std::cout << "server disconnect do_write: " << ec.message() << "\n";
+					std::cout << "server disconnect do_write_ssl: " << ec.message() << "\n";
 					state = client_state::awaiting_connection;
 					ssl_socket_->lowest_layer().close();
 					msg_history.clear();
@@ -1112,7 +1145,8 @@ private:
 		init_playback();
 		init_capture_rb();
 		init_playback_rb();
-		do_connect(endpoints);
+		//do_connect(endpoints);
+		do_connect_ssl(endpoints);
 		session_token = "";
 		auto client_ep = udp_socket->local_endpoint();
 		udp_port_client = client_ep.port();
@@ -1544,9 +1578,9 @@ void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window)
 		//ping_timer = 0.0f;
 	if(c->state == client_state::awaiting_connection){
 		//std::cout << "awaiting_connection try_reconnect()\n";
-		c->try_reconnect();
+		//c->try_reconnect();
+		//c->try_reconnect_ssl(); //TODO re-enable try_connect when I get tls working
 	}
-
 }
 template<typename Func>
 void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_client>& c) {
@@ -2754,7 +2788,7 @@ int main(int argc, char* argv[])
 			std::cerr << "Usage: chat_client <host> <port> \n";
 			return 1;
 		}*/
-		boost::asio::ssl::context ssl_context(boost::asio::ssl::context::sslv23);//tlsv12_client
+		boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tls_client);//tlsv12_client
 		ssl_context.set_verify_mode(boost::asio::ssl::verify_peer);
 		ssl_context.load_verify_file("C:/Users/rosse/Documents/isrg_cert.pem");
 		boost::asio::io_context io_context;		

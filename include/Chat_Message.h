@@ -81,7 +81,8 @@ public:
 			msg_type = static_cast<message_type>(std::stoi(std::string(header, msg_type_length)));
 		}
 		catch(const std::invalid_argument& e){
-			std::cout << "msg_type = static_cast<message_type>(std::stoi(std::string(header, 1)))\n";
+			std::cout << "=( bad header: " << header << "\n";
+			//std::cout << "data: " << data_ << "\n";
 			msg_type = message_type::bad_message;
 			return false;
 		}
