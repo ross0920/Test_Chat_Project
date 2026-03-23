@@ -854,12 +854,14 @@ private:
 			default:
 			{ break; }
 		}
-		do_read_header();
+		//do_read_header();
+		do_read_header_ssl();
 	}
 	void do_connect(const tcp::resolver::results_type& endpoints)
 	{
 		boost::asio::async_connect(*socket_, endpoints,
 			[this](boost::system::error_code ec, tcp::endpoint) {
+				std::cout << "async_connect running?\n";
 				if (!ec) {
 					retry_delay = 1;
 					state = client_state::ready;
@@ -931,6 +933,7 @@ private:
 		boost::asio::async_read(*socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t/*length*/) {
+				std::cout << "do_read_header async_read() running for some reason?\n";
 				if (!ec && read_msg_.decode_header()) {	
 					if (read_msg_.msg_type == message_type::particpants_request) {
 						//return;
@@ -955,7 +958,7 @@ private:
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t) {
-				std::cout << "decode_header()\n";
+				//std::cout << "decode_header()\n";
 				if (!ec && read_msg_.decode_header()) {
 					do_read_body_ssl();
 				}
@@ -978,6 +981,7 @@ private:
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this](boost::system::error_code ec, std::size_t /*length*/)
 			{
+				std::cout << "do_read_body running????\n";
 				if (!ec) {
 					std::string header = std::string(read_msg_.data(), chat_message::header_length);
 					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
@@ -1026,6 +1030,7 @@ private:
 				write_msgs_.front().length()),
 			[this](boost::system::error_code ec, std::size_t/*length*/)
 			{
+				std::cout << "do_write async_write????\n";
 				if (write_msgs_.front().msg_type == message_type::name_change_request) {
 					//return;
 				}
@@ -1173,7 +1178,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 				msg.set_message_type(message_type::name_change_request);
 				std::memcpy(msg.body(), &c->me.id, sizeof(uint8_t));
 				msg.encode_header();
-				c->write(msg);
+				c->write_ssl(msg);
 			}
 			if (ImGui::BeginMenu("Sound")) {
 				if (ImGui::BeginMenu("Input")) {
@@ -1309,7 +1314,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			std::memcpy(msg.body(), &id, sizeof(uint8_t));
 			std::memcpy(msg.body() + sizeof(uint8_t), text.c_str(), text.size());
 			msg.encode_header();
-			c->write(msg);
+			c->write_ssl(msg);
 			hint = "";
 			awaiting_change_response = true;
 			text.clear();
@@ -1340,7 +1345,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		std::memcpy(msg.body(), text.c_str(), msg.body_length());
 		msg.encode_header();
 		//std::cout << "sending msg: " << msg.data() << "\n";
-		c->write(msg);
+		c->write_ssl(msg);
 		text.clear();
 		was_focused = true;
 	}
@@ -1400,7 +1405,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 						msg.set_message_type(message_type::mic_test);
 						std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 						msg.encode_header();
-						c->write(msg);//TODO
+						c->write_ssl(msg);//TODO
 						iter->second.ps = participant_state::sending_vc_request;
 					}
 					ImGui::EndDisabled();
@@ -1418,7 +1423,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 							msg.set_message_type(message_type::end_vc);
 							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 							msg.encode_header();
-							c->write(msg);
+							c->write_ssl(msg);
 							iter->second.ps = participant_state::neutral;
 						}
 						ImGui::PopStyleColor(3);
@@ -1442,7 +1447,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 						std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 						std::memcpy(msg.body() + sizeof(sender_id), &receiver_id, sizeof(receiver_id));
 						msg.encode_header();
-						c->write(msg);//TODO
+						c->write_ssl(msg);//TODO
 						iter->second.ps = participant_state::sending_vc_request;
 					}
 					ImGui::EndDisabled();
@@ -1459,7 +1464,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 							std::memcpy(msg.body() + sizeof(sender_id), &receiver_id, sizeof(receiver_id));
 							msg.encode_header();
-							c->write(msg);
+							c->write_ssl(msg);
 							iter->second.ps = participant_state::neutral;
 						}
 						ImGui::SameLine();
@@ -1472,7 +1477,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 							std::memcpy(msg.body() + sizeof(sender_id), &receiver_id, sizeof(receiver_id));
 							msg.encode_header();
-							c->write(msg);//TODO
+							c->write_ssl(msg);//TODO
 							iter->second.ps = participant_state::neutral;
 						}					
 				}
@@ -1509,7 +1514,7 @@ void enter_name_window(std::shared_ptr<chat_client>& c) {
 		msg.set_message_type(message_type::chat);
 		std::memcpy(msg.body(), text.c_str(), msg.body_length());
 		msg.encode_header();
-		c->write(msg);
+		c->write_ssl(msg);
 		text.clear();
 	}
 	ImGui::End();
