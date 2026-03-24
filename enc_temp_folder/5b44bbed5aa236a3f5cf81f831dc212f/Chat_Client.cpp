@@ -2795,7 +2795,7 @@ int main(int argc, char* argv[])
 		}*/
 		boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tls_client);//tlsv12_client
 		ssl_context.set_verify_mode(boost::asio::ssl::verify_peer);
-		ssl_context.load_verify_file("C:/PEM_FILES/isrg_cert.pem");
+		ssl_context.load_verify_file("C:/Users/rosse/Documents/isrg_cert.pem");
 		boost::asio::io_context io_context;		
 
 		std::string ip = "159.89.49.248";
