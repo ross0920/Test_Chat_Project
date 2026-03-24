@@ -611,12 +611,14 @@ public:
 		auth.encode_header();
 		deliver(auth);
 	}
+
+
 	void wait_for_ready() {
 		state_ = session_state::wait;
 		authenticated = false;
 		id = 0;
 		//do_read_header(); 
-		start_ssl();
+		do_read_header_ssl();
 	}
 
 	void start_ssl() {
@@ -772,7 +774,7 @@ private:
 	bool verify_authorization_response(chat_message& msg) {
 		std::string p = std::string(msg.body(), msg.body_length());
 		if (p.find(key) != std::string::npos) {
-			std::cout << "auth verified!!!\n";
+			//std::cout << "auth verified!!!\n";
 			session_token = generate_token();
 			std::cout << "session_token[" << session_token << "]\n";
 			return true;
@@ -828,14 +830,14 @@ private:
 		deliver(validation);
 	}
 	void do_handshake() {
-		std::cout << "do_handshake()\n";
+		//std::cout << "do_handshake()\n";
 		auto self(shared_from_this());
-		std::cout << "start handshake\n";
+		//std::cout << "start handshake\n";
 		ssl_socket_.async_handshake(boost::asio::ssl::stream_base::server,
 			[this, self](const boost::system::error_code& ec) {
 				if (!ec) {
-					std::cout << "handshake success\n";
-					do_read_header_ssl();
+					//std::cout << "handshake success\n";
+					wait_for_ready();
 				}
 				else {
 					std::cout << "handshake fail: " << ec.message() << "\n";
@@ -843,7 +845,7 @@ private:
 		});
 	}
 	void do_read_header_ssl() {
-		std::cout << "do_read_header_ssl\n";
+		//std::cout << "do_read_header_ssl\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
@@ -881,7 +883,7 @@ private:
 		});
 	}
 	void do_read_body_ssl() {
-		std::cout << "do_read_body_ssl()\n";
+		//std::cout << "do_read_body_ssl()\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(ssl_socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
@@ -935,6 +937,7 @@ private:
 						//name is preceded by uint8_t id
 						std::string name(read_msg_.body() + sizeof(uint8_t), read_msg_.body_length() - sizeof(uint8_t));
 						room_->leave(shared_from_this());
+						std::cout << "new name = " << name << "\n";
 						if (!name.empty()) {
 							uint8_t id = 0;
 							std::memcpy(&id, read_msg_.body(), sizeof(uint8_t));
@@ -1001,6 +1004,7 @@ private:
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
+				std::cout << "do_read_body async_read() shouldn't be happening\n";
 				if (!ec) {
 					std::string header = std::string(read_msg_.data(), chat_message::header_length);
 					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
@@ -1109,7 +1113,7 @@ private:
 		);
 	}
 	void do_write_ssl() {
-		std::cout << "do_write_ssl()\n";
+		//std::cout << "do_write_ssl()\n";
 		auto self(shared_from_this());
 		auto msg = write_msgs_.front();
 		boost::asio::async_write(ssl_socket_,
@@ -1147,6 +1151,8 @@ private:
 			msg.length()),
 			[this, self, msg](boost::system::error_code ec, std::size_t)
 			{
+				std::cout << "do_write() async_write() should not be happening\n";
+
 				if (!ec) {
 					std::string header = std::string(msg.data(), chat_message::header_length);
 					std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
@@ -1223,7 +1229,7 @@ private:
 				std::cout << "tcp connection from [" << client_ip << "] on port[" << client_port << "]\n";
 				if (!ec) {
 					std::make_shared<chat_session>(boost::asio::ssl::stream<tcp::socket>(std::move(socket), ssl_context_),
-						std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->wait_for_ready();
+						std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->start_ssl();
 				}
 				do_accept_ssl();
 			}
