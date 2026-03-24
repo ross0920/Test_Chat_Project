@@ -73,7 +73,7 @@ public:
 		msg_type = m;
 	}
 	bool decode_header() {
-		std::cout << "decode_header\n";
+		//std::cout << "decode_header\n";
 		char header[header_length + 1] = "";// +1 for null terminator
 		std::strncat(header, data_, header_length);
 		//std::cout << "decode_header_2[" << std::string(header, 2) << "]\n";
@@ -118,7 +118,7 @@ public:
 		header[4] = '0' + (len / 10) % 10;
 		header[5] = '0' + (len % 10);
 
-		std::cout << "encode_header[" << header << "]\n";
+		//std::cout << "encode_header[" << header << "]\n";
 		std::memcpy(data_, header, header_length);
 	}
 private:
