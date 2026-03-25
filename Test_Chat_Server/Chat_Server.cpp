@@ -443,9 +443,26 @@ public:
 		std::cout << "msg_test_2.body[" << msg_test_2_body << "]\n";
 		msg_test_2.encode_header();
 
+		uint8_t pss = 0;
+		char* ptr = msg_test_2.body();
+		std::memcpy(&ps, ptr, sizeof(uint8_t));
+		std::cout << "ps[" << static_cast<int>(pss) << "]\n";
+		ptr += sizeof(uint8_t);
+		char* end = msg_test_2.body() + msg_test_2.body_length();
+		std::string mbody = std::string(msg_test_2.body(), msg_test_2.body_length());
+		std::cout << "\tm.body[" << mbody << "]\n";
+
 		it =
 			participant_map.begin();
 		for (; it != participant_map.end(); ++it) {
+			chat_participant p{};
+			uint8_t len = 0;
+			std::memcpy(&len, ptr, sizeof(uint8_t));
+			std::cout << "\tlen[" << static_cast<int>(len) << "]\n";
+			ptr += sizeof(uint8_t);
+			size_t size = p.deserialize(ptr);
+			std::cout << "\tsize[" << size << "]\n";
+			ptr += len + 1;
 			it->second->deliver(msg_test_2);
 		}
 	}
