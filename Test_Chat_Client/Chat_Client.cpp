@@ -592,14 +592,16 @@ private:
 		ptr += sizeof(uint8_t);
 		char* end = m.body() + m.body_length();
 		std::string mbody = std::string(m.body(), m.body_length());
-		std::cout << "m.body[" << mbody << "]\n";
+		std::cout << "\tm.body[" << mbody << "]\n";
 		for (int i = 0; i < ps; i++) {
 			if (ptr >= end) { break; }
 			chat_participant p{};
 			uint8_t len = 0;
 			std::memcpy(&len, ptr, sizeof(uint8_t));
+			std::cout << "\tlen[" << static_cast<int>(len) << "]\n";
 			ptr += sizeof(uint8_t);
 			size_t size = p.deserialize(ptr);
+			std::cout << "\tsize[" << size << "]\n";
 			ptr += len + 1;
 			participant_client_data pcd{ p };
 			participants.push_back(p);
