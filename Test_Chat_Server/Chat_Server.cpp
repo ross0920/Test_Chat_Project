@@ -411,15 +411,15 @@ public:
 		p_length_2 += sizeof(name_length);
 		p_length_2 += name_length;
 
-		std::memcpy(ptr, &p_length_2, sizeof(uint8_t));
-		std::memcpy(ptr + sizeof(uint8_t) * 1, &p->id, sizeof(uint8_t));
+		std::memcpy(ptr, &p_length_2, sizeof(uint8_t));//length of whole body
+		std::memcpy(ptr + sizeof(uint8_t) * 1, &p->id, sizeof(uint8_t));//id
 		uint8_t state = static_cast<uint8_t>(p->vc_state);
-		std::memcpy(ptr + sizeof(uint8_t) * 2, &state, sizeof(uint8_t));
-		std::memcpy(ptr + sizeof(uint8_t) * 3, &name_length, sizeof(uint8_t));
-		std::memcpy(ptr + sizeof(uint8_t) * 4, name.c_str(), name.length());
+		std::memcpy(ptr + sizeof(uint8_t) * 2, &state, sizeof(uint8_t));//vc_state
+		std::memcpy(ptr + sizeof(uint8_t) * 3, &name_length, sizeof(uint8_t));//name_length
+		std::memcpy(ptr + sizeof(uint8_t) * 4, name.c_str(), name.length());//name
 		std::string ptr_string = std::string(ptr, 4 + name.length());
 		std::cout << "\tptr[" << ptr_string << "]\n";
-		return 3 + name_length;
+		return 4 + name_length;
 	}
 	void update_client_participants() {
 		uint8_t ps = participant_map.size();
