@@ -411,7 +411,7 @@ public:
 		p_length_2 += sizeof(name_length);
 		p_length_2 += name_length;
 
-		std::memcpy(ptr, &p_length_2, sizeof(uint8_t));//length of whole body
+		std::memcpy(ptr, &p_length_2, sizeof(uint8_t));//length of participant data segment including id, vc_state, name_length and name
 		std::memcpy(ptr + sizeof(uint8_t) * 1, &p->id, sizeof(uint8_t));//id
 		uint8_t state = static_cast<uint8_t>(p->vc_state);
 		std::memcpy(ptr + sizeof(uint8_t) * 2, &state, sizeof(uint8_t));//vc_state
