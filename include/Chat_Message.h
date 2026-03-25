@@ -118,7 +118,7 @@ public:
 		header[4] = '0' + (len / 10) % 10;
 		header[5] = '0' + (len % 10);
 
-		//std::cout << "encode_header[" << header << "]\n";
+		std::cout << "encode_header[" << header << "]\n";
 		std::memcpy(data_, header, header_length);
 	}
 private:

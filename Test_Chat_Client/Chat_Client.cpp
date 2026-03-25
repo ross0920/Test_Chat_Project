@@ -591,6 +591,8 @@ private:
 		std::cout << "ps[" << static_cast<int>(ps) << "]\n";
 		ptr += sizeof(uint8_t);
 		char* end = m.body() + m.body_length();
+		std::string mbody = std::string(m.body(), m.body_length());
+		std::cout << "m.body[" << mbody << "]\n";
 		for (int i = 0; i < ps; i++) {
 			if (ptr >= end) { break; }
 			chat_participant p{};
