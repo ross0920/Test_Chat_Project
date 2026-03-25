@@ -419,7 +419,7 @@ public:
 		std::memcpy(ptr + sizeof(uint8_t) * 4, name.c_str(), name.length());
 		std::string ptr_string = std::string(ptr, 4 + name.length());
 		std::cout << "\tptr[" << ptr_string << "]\n";
-		return 4 + name_length;
+		return 3 + name_length;
 	}
 	void update_client_participants() {
 		uint8_t ps = participant_map.size();
