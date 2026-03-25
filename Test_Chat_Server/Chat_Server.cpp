@@ -431,9 +431,9 @@ public:
 		chat_message msg_test_2;
 		msg_test_2.set_message_type(message_type::particpants_request);
 		std::memcpy(msg_test_2.body(), &ps, sizeof(ps));//# participants
-		int i = 1;
+		//int i = 1;
 		for (; it != participant_map.end(); ++it) {
-			i += serialize_participant(it->second, msg_test_2.body() + sizeof(uint8_t) * i);
+			int i = serialize_participant(it->second, msg_test_2.body() + sizeof(uint8_t) * t_length_2);
 			std::cout << "\ti[" << i << "]\n";
 			t_length_2 += i;
 			std::cout << "\tt_length_2[" << static_cast<int>(t_length_2) << "]\n";
