@@ -434,7 +434,9 @@ public:
 		int i = 1;
 		for (; it != participant_map.end(); ++it) {
 			i += serialize_participant(it->second, msg_test_2.body() + sizeof(uint8_t) * i);
+			std::cout << "\ti[" << i << "]\n";
 			t_length_2 += i;
+			std::cout << "\tt_length_2[" << static_cast<int>(t_length_2) << "]\n";
 		}
 		msg_test_2.body_length(t_length_2);
 		std::string msg_test_2_body = std::string(msg_test_2.body(), msg_test_2.body_length());
