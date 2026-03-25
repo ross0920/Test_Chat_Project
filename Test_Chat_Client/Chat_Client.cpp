@@ -588,6 +588,7 @@ private:
 		uint8_t ps = 0;
 		char* ptr = m.body();
 		std::memcpy(&ps, ptr, sizeof(uint8_t));
+		std::cout << "ps[" << static_cast<int>(ps) << "]\n";
 		ptr += sizeof(uint8_t);
 		char* end = m.body() + m.body_length();
 		for (int i = 0; i < ps; i++) {
