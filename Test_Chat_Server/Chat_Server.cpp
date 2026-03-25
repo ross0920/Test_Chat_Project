@@ -400,11 +400,14 @@ public:
 		return false;
 	}
 	uint8_t serialize_participant(chat_participant_ptr p, char* ptr) {
+		std::cout << "serialize_participant()\n";
 		uint8_t p_length_2 = 0;
 		p_length_2 += sizeof(uint8_t);//id
 		p_length_2 += sizeof(uint8_t);//vc
 		std::string name = p->name;
+		std::cout << "\tname = " << name << "\n";
 		uint8_t name_length = name.length();
+		std::cout << "\tname_length = " << static_cast<int>(name_length) << "\n";
 		p_length_2 += sizeof(name_length);
 		p_length_2 += name_length;
 
@@ -414,7 +417,8 @@ public:
 		std::memcpy(ptr + sizeof(uint8_t) * 2, &state, sizeof(uint8_t));
 		std::memcpy(ptr + sizeof(uint8_t) * 3, &name_length, sizeof(uint8_t));
 		std::memcpy(ptr + sizeof(uint8_t) * 4, name.c_str(), name.length());
-
+		std::string ptr_string = std::string(ptr, 4 + name.length());
+		std::cout << "\tptr[" << ptr_string << "]\n";
 		return 4 + name_length;
 	}
 	void update_client_participants() {
@@ -433,6 +437,8 @@ public:
 			t_length_2 += i;
 		}
 		msg_test_2.body_length(t_length_2);
+		std::string msg_test_2_body = std::string(msg_test_2.body(), msg_test_2.body_length());
+		std::cout << "msg_test_2.body[" << msg_test_2_body << "]\n";
 		msg_test_2.encode_header();
 
 		it =
