@@ -445,7 +445,7 @@ public:
 
 		uint8_t pss = 0;
 		char* ptr = msg_test_2.body();
-		std::memcpy(&ps, ptr, sizeof(uint8_t));
+		std::memcpy(&pss, ptr, sizeof(uint8_t));
 		std::cout << "ps[" << static_cast<int>(pss) << "]\n";
 		ptr += sizeof(uint8_t);
 		char* end = msg_test_2.body() + msg_test_2.body_length();
