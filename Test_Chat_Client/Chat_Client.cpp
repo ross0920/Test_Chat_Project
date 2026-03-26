@@ -602,7 +602,7 @@ private:
 			ptr += sizeof(uint8_t);
 			size_t size = p.deserialize(ptr);
 			std::cout << "\tsize[" << size << "]\n";
-			ptr += len + 1;
+			ptr += len;
 			participant_client_data pcd{ p };
 			participants.push_back(p);
 			participant_map.emplace(p.id, p);
