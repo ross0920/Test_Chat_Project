@@ -462,7 +462,7 @@ public:
 			ptr += sizeof(uint8_t);
 			size_t size = p.deserialize(ptr);
 			std::cout << "\tsize[" << size << "]\n";
-			ptr += len + 1;
+			ptr += size + 1;
 			it->second->deliver(msg_test_2);
 		}
 	}
