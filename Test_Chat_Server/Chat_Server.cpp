@@ -373,6 +373,7 @@ public:
 		//leave chat room
 		release_id(participant->id);
 		participant_map.erase(participant->id);
+		participant->id = 0;//3/26/26
 	}
 	void deliver(const chat_message& msg) {
 		recent_msgs_.push_back(msg);
@@ -971,7 +972,7 @@ private:
 							std::memcpy(&id, read_msg_.body(), sizeof(uint8_t));
 							change_name(name);
 							//std::cout << "name changed\n";
-							this->id = id;
+							//this->id = id;
 							room_->join(shared_from_this());
 							room_->update_client_participants();
 						}
