@@ -603,6 +603,9 @@ private:
 			size_t size = p.deserialize(ptr);
 			std::cout << "\tsize[" << size << "]\n";
 			ptr += len;
+			std::cout << "adding participant p:\n"
+				<< "\tid[" << p.id << "]"
+				<< "\tname[" << p.name << "]\n";
 			participant_client_data pcd{ p };
 			participants.push_back(p);
 			participant_map.emplace(p.id, p);

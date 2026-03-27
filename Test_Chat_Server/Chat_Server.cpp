@@ -461,6 +461,9 @@ public:
 			std::cout << "\tlen[" << static_cast<int>(len) << "]\n";
 			ptr += sizeof(uint8_t);
 			size_t size = p.deserialize(ptr);
+			std::cout << "delivering participant p:\n"
+				<< "\tid[" << p.id << "]"
+				<< "\tname[" << p.name << "]\n";
 			std::cout << "\tsize[" << size << "]\n";
 			ptr += len;
 			it->second->deliver(msg_test_2);
