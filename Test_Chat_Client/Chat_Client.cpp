@@ -604,7 +604,7 @@ private:
 			std::cout << "\tsize[" << size << "]\n";
 			ptr += len;
 			std::cout << "adding participant p:\n"
-				<< "\tid[" << p.id << "]"
+				<< "\tid[" << static_cast<int>(p.id) << "]"
 				<< "\tname[" << p.name << "]\n";
 			participant_client_data pcd{ p };
 			participants.push_back(p);
