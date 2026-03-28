@@ -657,6 +657,9 @@ private:
 		if (it != participant_client_map.end()) {
 			it->second.ps = participant_state::requesting_vc;
 		}
+		else {
+			std::cout << "vc request from unknown user\n";
+		}
 		requests_.emplace(sender_id);
 		state = client_state::receiving_request;
 	}
@@ -1392,6 +1395,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	std::unordered_map<uint8_t, participant_client_data>::iterator iter = c->participant_client_map.begin();
 	for (; iter != c->participant_client_map.end(); ++iter) {
 		//ImGui::Text(c.participant_names[i].c_str());
+		ImGui::PushID(iter->second.p.id);
 		std::string participant_name_label = std::string(iter->second.p.name) + "##participant_" + std::to_string(iter->second.p.id);
 		if (ImGui::CollapsingHeader(participant_name_label.c_str())) {
 			ImGui::Indent();
@@ -1493,6 +1497,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			}
 			ImGui::Unindent();
 		}
+		ImGui::PopID();
 	}
 	ImGui::EndChild();
 	ImGui::End();
