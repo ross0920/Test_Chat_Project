@@ -61,7 +61,7 @@ uint8_t generate_id() {
 	if (!free_ids.empty()) {
 		uint8_t id = free_ids.front();
 		free_ids.pop();
-		std::cout << "returning free_id " << static_cast<int>(id) << "\n";
+		//std::cout << "returning free_id " << static_cast<int>(id) << "\n";
 		return id;
 	}
 	if (next_id >= 254) {
@@ -70,12 +70,12 @@ uint8_t generate_id() {
 	}
 	else {
 		uint8_t id = next_id++;
-		std::cout << "returning new id " << static_cast<int>(id) << "\n";
+		//std::cout << "returning new id " << static_cast<int>(id) << "\n";
 		return id;
 	}
 }
 void release_id(uint8_t id) {
-	std::cout << "release id " << static_cast<int>(id) << "\n";
+	//std::cout << "release id " << static_cast<int>(id) << "\n";
 	free_ids.push(id);
 }
 class id_generator {
@@ -87,7 +87,7 @@ public:
 		if (!free_ids.empty()) {
 			uint8_t id = free_ids.front();
 			free_ids.pop();
-			std::cout << "returning free_id " << static_cast<int>(id) << "\n";
+			//std::cout << "returning free_id " << static_cast<int>(id) << "\n";
 			return id;
 		}
 		if (next_id >= 254) {
@@ -96,12 +96,12 @@ public:
 		}
 		else {
 			uint8_t id = next_id++;
-			std::cout << "returning new id " << static_cast<int>(id) << "\n";
+			//std::cout << "returning new id " << static_cast<int>(id) << "\n";
 			return id;
 		}
 	}
 	void release_id(uint8_t id) {
-		std::cout << "releasing id " << static_cast<int>(id) << "\n";
+		//std::cout << "releasing id " << static_cast<int>(id) << "\n";
 		free_ids.push(id);
 	}
 };
@@ -171,7 +171,7 @@ public:
 		}
 	}
 	void add_participant(chat_participant_ptr participant_) {
-		std::cout << "try add vc participant\n";
+		//std::cout << "try add vc participant\n";
 		if (participants_.find(participant_->id) != participants_.end() || participants_.size() > max_participants || participant_->get_vc_room_id()) { 
 			std::cout << "fail add vc participant with room id " << static_cast<int>(participant_->get_vc_room_id()) << " to vc room " << static_cast<int>(room_id_) << "\n";
 
@@ -189,7 +189,7 @@ public:
 
 		if (participants_[recv_vc_msg_->sender_id]->get_vc_room_id() == 0) { 	
 			//invalid sender. tcp server handles clean up
-			std::cout << "vc room is 0\n";
+			//std::cout << "vc room is 0\n";
 			return; 
 		}
 		participants_[recv_vc_msg_->sender_id]->write_vc_msg_to_rb(recv_vc_msg_);
@@ -355,7 +355,7 @@ public:
 					vc_room_id_gen.release_id(vc_room_id);
 				}
 			}
-			std::cout << "end search\n";
+			//std::cout << "end search\n";
 		}
 	}
 	void leave(chat_participant_ptr participant) {
@@ -401,14 +401,14 @@ public:
 		return false;
 	}
 	uint8_t serialize_participant(chat_participant_ptr p, char* ptr) {
-		std::cout << "serialize_participant()\n";
+		//std::cout << "serialize_participant()\n";
 		uint8_t p_length_2 = 0;
 		p_length_2 += sizeof(uint8_t);//id
 		p_length_2 += sizeof(uint8_t);//vc
 		std::string name = p->name;
-		std::cout << "\tname = " << name << "\n";
+		//std::cout << "\tname = " << name << "\n";
 		uint8_t name_length = name.length();
-		std::cout << "\tname_length = " << static_cast<int>(name_length) << "\n";
+		//std::cout << "\tname_length = " << static_cast<int>(name_length) << "\n";
 		p_length_2 += sizeof(name_length);
 		p_length_2 += name_length;
 
@@ -419,7 +419,7 @@ public:
 		std::memcpy(ptr + sizeof(uint8_t) * 3, &name_length, sizeof(uint8_t));//name_length
 		std::memcpy(ptr + sizeof(uint8_t) * 4, name.c_str(), name.length());//name
 		std::string ptr_string = std::string(ptr, 4 + name.length());
-		std::cout << "\tptr[" << ptr_string << "]\n";
+		//std::cout << "\tptr[" << ptr_string << "]\n";
 		return 4 + name_length;
 	}
 	void update_client_participants() {
@@ -435,28 +435,28 @@ public:
 		//int i = 1;
 		for (; it != participant_map.end(); ++it) {
 			int i = serialize_participant(it->second, msg_test_2.body() + sizeof(uint8_t) * t_length_2);
-			std::cout << "\ti[" << i << "]\n";
+			//std::cout << "\ti[" << i << "]\n";
 			t_length_2 += i;
-			std::cout << "\tt_length_2[" << static_cast<int>(t_length_2) << "]\n";
+			//std::cout << "\tt_length_2[" << static_cast<int>(t_length_2) << "]\n";
 		}
 		msg_test_2.body_length(t_length_2);
-		std::string msg_test_2_body = std::string(msg_test_2.body(), msg_test_2.body_length());
-		std::cout << "msg_test_2.body[" << msg_test_2_body << "]\n";
+		//std::string msg_test_2_body = std::string(msg_test_2.body(), msg_test_2.body_length());
+		//std::cout << "msg_test_2.body[" << msg_test_2_body << "]\n";
 		msg_test_2.encode_header();
 
 		uint8_t pss = 0;
 		char* ptr = msg_test_2.body();
 		std::memcpy(&pss, ptr, sizeof(uint8_t));
-		std::cout << "ps[" << static_cast<int>(pss) << "]\n";
+		//std::cout << "ps[" << static_cast<int>(pss) << "]\n";
 		ptr += sizeof(uint8_t);
 		char* end = msg_test_2.body() + msg_test_2.body_length();
-		std::string mbody = std::string(msg_test_2.body(), msg_test_2.body_length());
-		std::cout << "\tm.body[" << mbody << "]\n";
+		//std::string mbody = std::string(msg_test_2.body(), msg_test_2.body_length());
+		//std::cout << "\tm.body[" << mbody << "]\n";
 
 		it =
 			participant_map.begin();
 		for (; it != participant_map.end(); ++it) {
-			chat_participant p{};
+			/*chat_participant p{};
 			uint8_t len = 0;
 			std::memcpy(&len, ptr, sizeof(uint8_t));
 			std::cout << "\tlen[" << static_cast<int>(len) << "]\n";
@@ -466,7 +466,7 @@ public:
 				<< "\tid[" << static_cast<int>(p.id) << "]"
 				<< "\tname[" << p.name << "]\n";
 			std::cout << "\tsize[" << size << "]\n";
-			ptr += len;
+			ptr += len;*/
 			it->second->deliver(msg_test_2);
 		}
 	}
@@ -1237,7 +1237,7 @@ public:
 		ssl_context_.use_private_key_file("/etc/letsencrypt/live/magoogan.duckdns.org/privkey.pem", boost::asio::ssl::context::pem);
 		//do_accept();
 		do_accept_ssl();
-		//do_receive();
+		do_receive();
 	}
 	void do_receive() {
 		if (udp_socket_ != nullptr) {

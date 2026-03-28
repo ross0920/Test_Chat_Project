@@ -588,24 +588,24 @@ private:
 		uint8_t ps = 0;
 		char* ptr = m.body();
 		std::memcpy(&ps, ptr, sizeof(uint8_t));
-		std::cout << "ps[" << static_cast<int>(ps) << "]\n";
+		//std::cout << "ps[" << static_cast<int>(ps) << "]\n";
 		ptr += sizeof(uint8_t);
 		char* end = m.body() + m.body_length();
-		std::string mbody = std::string(m.body(), m.body_length());
-		std::cout << "\tm.body[" << mbody << "]\n";
+		//std::string mbody = std::string(m.body(), m.body_length());
+		//std::cout << "\tm.body[" << mbody << "]\n";
 		for (int i = 0; i < ps; i++) {
 			if (ptr >= end) { break; }
 			chat_participant p{};
 			uint8_t len = 0;
 			std::memcpy(&len, ptr, sizeof(uint8_t));
-			std::cout << "\tlen[" << static_cast<int>(len) << "]\n";
+			//std::cout << "\tlen[" << static_cast<int>(len) << "]\n";
 			ptr += sizeof(uint8_t);
 			size_t size = p.deserialize(ptr);
-			std::cout << "\tsize[" << size << "]\n";
+			//std::cout << "\tsize[" << size << "]\n";
 			ptr += len;
-			std::cout << "adding participant p:\n"
-				<< "\tid[" << static_cast<int>(p.id) << "]"
-				<< "\tname[" << p.name << "]\n";
+			//std::cout << "adding participant p:\n"
+			//	<< "\tid[" << static_cast<int>(p.id) << "]"
+			//	<< "\tname[" << p.name << "]\n";
 			participant_client_data pcd{ p };
 			participants.push_back(p);
 			participant_map.emplace(p.id, p);
@@ -962,7 +962,7 @@ private:
 			});
 	}
 	void do_read_header_ssl() {
-		std::cout << "do_read_header_ssl()\n";
+		//std::cout << "do_read_header_ssl()\n";
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t) {
@@ -1009,7 +1009,7 @@ private:
 			});
 	}
 	void do_read_body_ssl() {
-		std::cout << "do_read_body_ssl()\n";
+		//std::cout << "do_read_body_ssl()\n";
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this](boost::system::error_code ec, std::size_t) {
@@ -1082,7 +1082,7 @@ private:
 		);
 	}
 	void do_write_ssl() {
-		std::cout << "do_write_ssl()\n";
+		//std::cout << "do_write_ssl()\n";
 		boost::asio::async_write(*ssl_socket_,
 			boost::asio::buffer(write_msgs_.front().data(), write_msgs_.front().length()),
 			[this](boost::system::error_code ec, std::size_t) {

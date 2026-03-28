@@ -74,26 +74,26 @@ public:
 		return ptr - out;
 	}
 	std::size_t deserialize(const char* in) {
-		std::cout << "deserialize chat_participant\n";
+		//std::cout << "deserialize chat_participant\n";
 		const char* ptr = in;
 
 		std::memcpy(&id, ptr, sizeof(id));
-		std::cout << "id: " << static_cast<int>(id) << "\n";
+		//std::cout << "id: " << static_cast<int>(id) << "\n";
 		ptr += sizeof(id);
 
 		uint8_t state;
 		std::memcpy(&state, ptr, sizeof(state));
 		vc_state = static_cast<voice_chat_state>(state);
-		std::cout << "vc_state: " << static_cast<int>(vc_state) << "\n";
+		//std::cout << "vc_state: " << static_cast<int>(vc_state) << "\n";
 		ptr += sizeof(state);
 
 		uint8_t name_len;
 		std::memcpy(&name_len, ptr, sizeof(name_len));
-		std::cout << "name_len = " << static_cast<int>(name_len) << "\n";
+		//std::cout << "name_len = " << static_cast<int>(name_len) << "\n";
 		ptr += sizeof(name_len);
 
 		name.assign(ptr, name_len);
-		std::cout << "name = " << name << "\n";
+		//std::cout << "name = " << name << "\n";
 		ptr += name_len;
 
 		return ptr - in;
