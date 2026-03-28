@@ -151,9 +151,9 @@ public:
 	{
 		add_participant(participant_);
 		participant_->set_vc_room_id(room_id_);
-		participant_->set_vc_room_id(room_id_);
+		//participant_->set_vc_room_id(room_id_);
 		participant_->start_read_vc_rb();
-		participant_->start_read_vc_rb();
+		//participant_->start_read_vc_rb();
 	}
 	void leave_room(chat_participant_ptr participant_) {
 		remove_participant(participant_);
