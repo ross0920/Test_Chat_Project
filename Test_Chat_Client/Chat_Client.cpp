@@ -679,9 +679,9 @@ private:
 		std::cout << "count[" << static_cast<int>(count) << "]\n";
 		if (count > max_participants) { return; }
 		me.vc_state = voice_chat_state::in_session;
-		for (int i = 0; i < count; i++) {
+		for (uint8_t i = 0; i < count; i++) {
 			uint8_t temp_id = 0;
-			std::memcpy(&temp_id, m.body() + sizeof(uint8_t) + sizeof(uint8_t) * i, sizeof(uint8_t));
+			std::memcpy(&temp_id, m.body() + i, 1);
 			std::cout << "temp_id[" << static_cast<int>(temp_id) << "]\n";
 			if (temp_id != me.id) {
 				if (participant_map.find(temp_id) == participant_map.end()) { continue; }
