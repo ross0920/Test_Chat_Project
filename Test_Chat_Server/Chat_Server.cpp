@@ -514,14 +514,14 @@ public:
 		uint8_t count;
 		vc_rooms.at(vc_room_id)->get_participant_ids(ids, count);
 		std::memcpy(msg.body(), &count, sizeof(count));
-		std::memcpy(msg.body() + sizeof(count), ids, count);
-		std::memcpy(msg.body() + sizeof(count) + count, &vc_room_id, sizeof(vc_room_id));
-		std::memcpy(msg.body() + sizeof(count) + count + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
-		msg.body_length(sizeof(count) + count + sizeof(vc_room_id) + sizeof(udp_port));
+		std::memcpy(msg.body() + sizeof(count), ids, sizeof(ids));
+		std::memcpy(msg.body() + sizeof(count) + sizeof(ids), &vc_room_id, sizeof(vc_room_id));
+		std::memcpy(msg.body() + sizeof(count) + sizeof(ids) + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
+		msg.body_length(sizeof(count) + sizeof(ids) + sizeof(vc_room_id) + sizeof(udp_port));
 		msg.encode_header();
-		//std::string header = std::string(msg.data(), chat_message::header_length);
+		std::string header = std::string(msg.data(), chat_message::header_length);
 		//std::string body = std::string(msg.body(), msg.body_length());
-		//std::cout << "accept_vc_request count[" << static_cast<int>(count) << "] header[" << header << "] body[" << body << "]\n";
+		std::cout << "accept_vc_request count[" << static_cast<int>(count) << "] header[" << header << "] body[" << msg.body() << "]\n";
 		approved_vcs.emplace(sender_id, receiver_id);
 		if (sender_id != receiver_id) {
 			approved_vcs.emplace(receiver_id, sender_id);

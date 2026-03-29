@@ -672,14 +672,17 @@ private:
 		}
 	}
 	void vc_request_accepted(chat_message& m) {
+		std::cout << "vc_request_accepted()\n";
 		uint8_t count = 0;
 		vc_partner_ids.clear(); //only will get 2 vc participants currently
 		std::memcpy(&count, m.body(), sizeof(count));
+		std::cout << "count[" << static_cast<int>(count) << "]\n";
 		if (count > max_participants) { return; }
 		me.vc_state = voice_chat_state::in_session;
 		for (int i = 0; i < count; i++) {
 			uint8_t temp_id = 0;
 			std::memcpy(&temp_id, m.body() + sizeof(uint8_t) + sizeof(uint8_t) * i, sizeof(uint8_t));
+			std::cout << "temp_id[" << static_cast<int>(temp_id) << "]\n";
 			if (temp_id != me.id) {
 				if (participant_map.find(temp_id) == participant_map.end()) { continue; }
 				participant_client_map.at(temp_id).ps = participant_state::in_vc;//will throw error if not in map
