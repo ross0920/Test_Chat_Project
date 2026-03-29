@@ -514,13 +514,22 @@ public:
 		uint8_t count;
 		vc_rooms.at(vc_room_id)->get_participant_ids(ids, count);
 		std::memcpy(msg.body(), &count, sizeof(count));
-		std::memcpy(msg.body() + sizeof(count), ids, sizeof(ids));
-		std::memcpy(msg.body() + sizeof(count) + sizeof(ids), &vc_room_id, sizeof(vc_room_id));
-		std::memcpy(msg.body() + sizeof(count) + sizeof(ids) + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
-		msg.body_length(sizeof(count) + sizeof(ids) + sizeof(vc_room_id) + sizeof(udp_port));
+		//do a loop here and instead of copying in whole array, copy in count amount
+		for (int i = 1; i <= count; ++i) {
+			std::memcpy(msg.body() + sizeof(count), &ids[i - 1], 1);
+		}
+		//std::memcpy(msg.body() + sizeof(count), ids, sizeof(ids));
+		std::memcpy(msg.body() + sizeof(count) + count, &vc_room_id, sizeof(vc_room_id));
+		std::memcpy(msg.body() + sizeof(count) + count + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
+		std::cout << "udp_port[" << static_cast<int>(udp_port) << "]\n";
+		msg.body_length(sizeof(count) + count + sizeof(vc_room_id) + sizeof(udp_port));
 		msg.encode_header();
 		std::string header = std::string(msg.data(), chat_message::header_length);
 		//std::string body = std::string(msg.body(), msg.body_length());
+		uint8_t vcroomid = 0;
+		std::memcpy(&vcroomid, msg.body() + sizeof(count) + count, sizeof(vcroomid));
+		std::cout << "vcroomid[" << static_cast<int>(vcroomid) << "]\n";
+		std::cout << "sizeof(ids)[" << sizeof(ids) << "]\n";
 		std::cout << "accept_vc_request count[" << static_cast<int>(count) << "] header[" << header << "] body[" << msg.body() << "]\n";
 		approved_vcs.emplace(sender_id, receiver_id);
 		if (sender_id != receiver_id) {
@@ -542,7 +551,7 @@ public:
 		std::memcpy(msg.body(), &sender_id, 1);
 		std::memcpy(msg.body() + sizeof(sender_id), &vc_room_id, sizeof(vc_room_id));
 		std::memcpy(msg.body() + sizeof(sender_id) + sizeof(vc_room_id), &udp_port, sizeof(udp_port));//2bytes
-		msg.body_length(+sizeof(sender_id) + sizeof(vc_room_id) + sizeof(udp_port));
+		msg.body_length(sizeof(sender_id) + sizeof(vc_room_id) + sizeof(udp_port));
 		msg.encode_header();
 		std::string header = std::string(msg.data(), chat_message::header_length);
 		std::string body = std::string(msg.body(), msg.body_length());
