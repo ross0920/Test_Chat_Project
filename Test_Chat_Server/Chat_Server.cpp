@@ -812,7 +812,7 @@ private:
 		return false;
 	}
 	void store_client_udp_port(chat_message& msg) {
-		std::cout << "store!\n";
+		std::cout << "store_client_udp_port!\n";
 		//uint16_t port = 0;
 		//if (msg.body_length() < sizeof(port)) {
 			//header_not_recognized_error();
@@ -824,7 +824,7 @@ private:
 		std::string port_2(msg.body(), msg.body_length());
 		//std::cout << "udp port = " << port << "\n";
 		std::cout << "udp port_2 = " << port_2 << "\n";
-		std::cout << "test\n";
+		//std::cout << "test\n";
 		//udp_remote_endpoint_ = std::make_shared<udp::endpoint>(client_ip, port);
 		udp_remote_endpoint_ = std::make_shared<udp::endpoint>(tcp_endpoint_.address(), std::stoi(port_2));
 		//std::shared_ptr<boost::asio::ip::udp::endpoint> ep_2 = std::make_shared<udp::endpoint>(client_ip, std::stoi(port_2));

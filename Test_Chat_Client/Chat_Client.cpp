@@ -691,8 +691,10 @@ private:
 		}
 		vc_room_id = 0;
 		std::memcpy(&vc_room_id, m.body() + sizeof(uint8_t) + count, sizeof(vc_room_id));
+		std::cout << "vc_room_id[" << static_cast<int>(vc_room_id) << "]\n";
 		udp_port_server = 0;
 		std::memcpy(&udp_port_server, m.body() + sizeof(uint8_t) + count + sizeof(vc_room_id), sizeof(udp_port_server));
+		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
 		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
 		send_udp_port();
 	}
