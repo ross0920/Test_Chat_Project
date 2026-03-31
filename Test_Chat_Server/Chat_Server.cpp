@@ -203,7 +203,7 @@ public:
 			size_t size = msg_copy->length();
 			//std::cout << "write to client " << iter->second->name << "\n";
 			if (iter->second->id == msg_copy->sender_id && !iter->second->get_feedback_option()) { 
-				//std::cout << "skip send same name\n";
+				std::cout << "skip send same name\n";
 				continue; }
 			//std::cout << "do async send\n";
 			udp_socket_->async_send_to(buffer, *iter->second->get_client_udp_endpoint(),
@@ -212,9 +212,9 @@ public:
 						//std::cout << "write to client [" << iter->second->id << "][" << iter->second->name << "] fail\n";
 					}
 					else {
-						/*std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
+						std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
 							<< " write to client size [" << size << "]\n\t" 
-							<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";*/
+							<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";
 					}
 				}
 			);

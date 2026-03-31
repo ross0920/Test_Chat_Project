@@ -508,7 +508,7 @@ private:
 					//std::cout << "udp_socket->async_receive_from\n";
 					check_and_read_body_test(read_vc_msg_);
 				}
-				//std::cout << "async_receive_from lambda body\n";
+				std::cout << "async_receive_from lambda body\n";
 				check_and_read_header_test();
 			});
 	}
@@ -521,14 +521,14 @@ private:
 			size_t write_size = requested;
 			void* pOut;
 			result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
-			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
+			std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
 				/*std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
 					" result = " << result << 
 					"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";*/
 				break;
 			}
-			//std::cout << "write to rb_playback " << write_size << "\n";
+			std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&playback_ctx.ring_buffer, write_size);
 			requested -= write_size;
