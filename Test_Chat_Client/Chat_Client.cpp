@@ -1840,7 +1840,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	ma_result result;
 	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
-	//std::cout << "total_bytes playback = " << total_bytes << "\n";
+	std::cout << "total_bytes playback = " << total_bytes << "\n";
 	size_t size = total_bytes;
 	void* pOut;
 	result = ma_rb_acquire_read(&ctx->ring_buffer, &size, &pOut);
@@ -1852,7 +1852,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	}
 	std::memcpy(pFramesOut, pOut, size);
 	ma_rb_commit_read(&ctx->ring_buffer, size);
-	//std::cout << "read rb_playback " << size << "\n";
+	std::cout << "read rb_playback " << size << "\n";
 	if (size < total_bytes) {
 		//	std::cout << "playback size < total_bytes : " << size << " < " << total_bytes << "\n";
 		std::memset((uint8_t*)pFramesOut + size, 0, total_bytes - size);
