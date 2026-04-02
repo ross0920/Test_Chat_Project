@@ -36,8 +36,6 @@ enum class message_type : uint8_t {
 	bad_message = 27
 };
 
-
-
 class chat_message {
 public:
 	static constexpr std::size_t msg_type_length = 2;

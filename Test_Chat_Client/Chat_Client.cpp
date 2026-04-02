@@ -84,12 +84,12 @@ const int buffer_size = 19200;
 
 ma_device_info* capture_devices;
 ma_uint32 capture_count = 0;
-static int selected_capture = 2;
+static int selected_capture = 0;
 std::vector<char*> capture_devices_names{};
 
 ma_device_info* playback_devices;
 ma_uint32 playback_count = 0;
-static int selected_playback = 2;
+static int selected_playback = 0;
 std::vector<char*> playback_devices_names{};
 
 bool mic_test = false;
