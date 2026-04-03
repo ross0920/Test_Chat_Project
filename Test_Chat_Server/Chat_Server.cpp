@@ -202,8 +202,10 @@ public:
 			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
 			size_t size = msg_copy->length();
 			//std::cout << "write to client " << iter->second->name << "\n";
-			if (iter->second->id == msg_copy->sender_id && !iter->second->get_feedback_option()) { 
-				std::cout << "skip send same name\n";
+			std::cout << "iter->second->id[" << static_cast<uint8_t>(iter->second->id) << "] msg_copy->sender_id["
+				<< static_cast<uint8_t>(msg_copy->sender_id) << "]\n";
+			if (iter->second->id == msg_copy->sender_id /*&& !iter->second->get_feedback_option()*/) { 
+				std::cout << "SKIP SEND SAME NAME\n";
 				continue; }
 			//std::cout << "do async send\n";
 			udp_socket_->async_send_to(buffer, *iter->second->get_client_udp_endpoint(),
@@ -212,9 +214,9 @@ public:
 						//std::cout << "write to client [" << iter->second->id << "][" << iter->second->name << "] fail\n";
 					}
 					else {
-						std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
-							<< " write to client size [" << size << "]\n\t" 
-							<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";
+						//std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
+							//<< " write to client size [" << size << "]\n\t" 
+							//<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";
 					}
 				}
 			);
