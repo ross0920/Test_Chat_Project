@@ -209,6 +209,7 @@ public:
 				//std::cout << "SKIP SEND SAME NAME\n";
 				continue; }
 			//std::cout << "do async send\n";
+			if (iter->second->get_client_udp_endpoint() == nullptr) { continue; } //was crashing server. TODO find better solution
 			udp_socket_->async_send_to(buffer, *iter->second->get_client_udp_endpoint(),
 				[this, self, size, iter, msg_copy](boost::system::error_code ec, std::size_t bytes) {
 					if (ec) {
@@ -741,7 +742,7 @@ public:
 			std::cerr << "chat_participant " << id << " vc_room_id " << vc_room_id << "doesn't exist\n";
 			return false;
 		}
-		std::cout << "m->sender_id[" << static_cast<int>(m->sender_id) << "]\n";
+		//std::cout << "m->sender_id[" << static_cast<int>(m->sender_id) << "]\n";
 		/*if (room_->vc_rooms[vc_room_id]->participants_.size() <= 1) { 
 			std::cout << "room only has 1 participant not sending msg\n";
 			return false; }*/
@@ -1298,7 +1299,7 @@ private:
 			boost::asio::buffer(recv_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), 
 			udp_remote_endpoint_,
 			std::bind(&chat_server::handle_receive, this,
-				udp_remote_endpoint_,
+				//udp_remote_endpoint_,
 				recv_vc_msg_,
 				boost::asio::placeholders::error,
 				boost::asio::placeholders::bytes_transferred));
@@ -1316,12 +1317,12 @@ private:
 				udp_start_receive_old();
 			});
 	}
-	void handle_receive(udp::endpoint remote_endpoint, std::shared_ptr<voice_chat_message> recv_vc_msg_, const boost::system::error_code& error,
+	void handle_receive(/*udp::endpoint& remote_endpoint,*/ std::shared_ptr<voice_chat_message> recv_vc_msg_, const boost::system::error_code& error,
 		std::size_t) {
 		if (!error) {
-			if (recv_vc_msg_->decode_header()) {
-				std::string client_ip = remote_endpoint.address().to_string();
-				unsigned short client_port = remote_endpoint.port();
+			if (recv_vc_msg_->decode_header()                                                                   ) {
+				std::string client_ip = udp_remote_endpoint_.address().to_string();
+				unsigned short client_port = udp_remote_endpoint_.port();
 				std::string key = client_ip + " : " + std::to_string(client_port);
 				if (ips.insert(key).second) {
 					std::cout << "new udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
