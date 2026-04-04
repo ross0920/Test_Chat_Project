@@ -197,14 +197,15 @@ public:
 	void send_message_to_playback(std::shared_ptr<voice_chat_message> recv_vc_msg_, uint8_t& sender_id) {
 		auto self = shared_from_this();
 		auto iter = participants_.begin();
+		std::cout << "recv_vc_msg->sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
 		for (; iter != participants_.end(); ++iter) {
 			auto msg_copy = std::make_shared<voice_chat_message>(*recv_vc_msg_);
 			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
 			size_t size = msg_copy->length();
 			//std::cout << "write to client " << iter->second->name << "\n";
-			std::cout << "iter->second->id[" << static_cast<uint8_t>(iter->second->id) << "] msg_copy->sender_id["
-				<< static_cast<uint8_t>(msg_copy->sender_id) << "]\n";
-			if (iter->second->id == msg_copy->sender_id /*&& !iter->second->get_feedback_option()*/) { 
+			std::cout << "iter->second->id[" << static_cast<int>(iter->second->id) << "] msg_copy->sender_id["
+				<< static_cast<int>(sender_id) << "]\n";
+			if (iter->second->id == sender_id /*&& !iter->second->get_feedback_option()*/) { 
 				std::cout << "SKIP SEND SAME NAME\n";
 				continue; }
 			//std::cout << "do async send\n";
@@ -728,18 +729,19 @@ public:
 		//std::cout << "try_send_vc_msg()\n";
 		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 		uint8_t test = 3;
-		/*std::cout << "encoding:"
+		std::cout << "encoding:"
 			<< "\n\tsession_token[" << session_token << "]"
 			<< "\n\tsize[" << static_cast<int>(size) << "]"
 			<< "\n\tvc_room_id[" << static_cast<int>(vc_room_id) << "]"
 			<< "\n\tid[" << static_cast<int>(id) << "]"
-			<< "\n\ttest[" << static_cast<int>(test) << "]\n";*/
+			<< "\n\ttest[" << static_cast<int>(test) << "]\n";
 		m->encode_header(session_token, size, vc_room_id, id);
 		std::memcpy(m->body(), in, size);
 		if (room_->vc_rooms.find(vc_room_id) == room_->vc_rooms.end()) {
 			std::cerr << "chat_participant " << id << " vc_room_id " << vc_room_id << "doesn't exist\n";
 			return false;
 		}
+		std::cout << "m->sender_id[" << static_cast<int>(m->sender_id) << "]\n";
 		/*if (room_->vc_rooms[vc_room_id]->participants_.size() <= 1) { 
 			std::cout << "room only has 1 participant not sending msg\n";
 			return false; }*/

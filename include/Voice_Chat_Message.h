@@ -64,7 +64,7 @@ public:
 		//std::cout << "write room_id: [" << static_cast<int>(room_id_) << "]\n";
 		ptr += sizeof(room_id_);
 		std::memcpy(ptr, &sender_id_, sizeof(sender_id_));
-		//std::cout << "write sender_id: [" << static_cast<int>(sender_id_) << "]\n";
+		std::cout << "write sender_id: [" << static_cast<int>(sender_id_) << "]\n";
 		ptr += sizeof(sender_id_);
 		//std::cout << "try write body_length: [" << body_length_ << "]\n";
 		std::memcpy(ptr, &body_length_, sizeof(body_length_));
