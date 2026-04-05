@@ -46,7 +46,8 @@ public:
 	virtual void commit_read_rb(size_t size) {};
 	virtual void start_read_vc_rb() {};
 	virtual void stop_read_vc_rb() {};
-	virtual bool get_feedback_option() { return false;};
+	virtual bool get_feedback_option() { return false; };
+	virtual void set_feedback_option(bool val) { }
 	std::size_t serialized_size() {
 		size_t size = 0;
 		size += sizeof(id);

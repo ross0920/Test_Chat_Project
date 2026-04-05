@@ -205,7 +205,7 @@ public:
 			//std::cout << "write to client " << iter->second->name << "\n";
 			//std::cout << "iter->second->id[" << static_cast<int>(iter->second->id) << "] msg_copy->sender_id["
 				//<< static_cast<int>(sender_id) << "]\n";
-			if (iter->second->id == sender_id /*&& !iter->second->get_feedback_option()*/) { 
+			if (iter->second->id == sender_id && !iter->second->get_feedback_option()) { 
 				//std::cout << "SKIP SEND SAME NAME\n";
 				continue; }
 			//std::cout << "do async send\n";
@@ -347,18 +347,18 @@ public:
 		uint8_t vc_room_id = participant->get_vc_room_id();
 		std::cout << "leave room vc_room_id = " << static_cast<int>(vc_room_id) << "\n";
 		uint8_t left_vc_room = 0;
+		participant->set_feedback_option(false);
 		if (vc_room_id) {
 			std::cout << "search for room\n";
 			auto iter = vc_rooms.find(vc_room_id);
 			if (iter != vc_rooms.end()) {
 				vc_rooms.at(vc_room_id)->leave_room(participant);
 				std::cout << "participant " << participant->name << " " << static_cast<int>(participant->id) << " removed from vc room " << static_cast<int>(vc_room_id) << "\n";
-
 				if (vc_rooms.at(vc_room_id)->participants_.size() == 0) {
 					vc_rooms.erase(vc_room_id);
 					vc_room_id_gen.release_id(vc_room_id);
 				}
-			}
+			}			
 			//std::cout << "end search\n";
 		}
 	}
@@ -579,6 +579,7 @@ public:
 		vc_rooms.emplace(id, room);//TODO dunno if 'this' works
 		return id;
 	}
+
 private:
 	std::unordered_map<uint8_t, uint8_t> approved_vcs;//sender_id, partner_id
 	std::shared_ptr<udp::socket> udp_socket_;
@@ -653,8 +654,6 @@ public:
 		auth.encode_header();
 		deliver(auth);
 	}
-
-
 	void wait_for_ready() {
 		state_ = session_state::wait;
 		authenticated = false;
@@ -801,7 +800,9 @@ public:
 			do_write_ssl();
 		}
 	}
-
+	void set_feedback_option(bool val) override {
+		feedback = val;
+	}
 private:
 	std::string generate_token() {
 		std::array<uint8_t, 12> bytes;
@@ -1020,6 +1021,7 @@ private:
 					}
 					case(message_type::mic_test): {
 						room_->accept_mic_check_request(read_msg_);
+						set_feedback_option(true);
 						break;
 					}
 					case(message_type::end_vc): {
