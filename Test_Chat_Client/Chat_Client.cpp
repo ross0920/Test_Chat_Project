@@ -432,6 +432,7 @@ public:
 		do_connect(endpoints);
 	}
 	void try_reconnect_ssl() {
+		std::cout << "try_reconnect_ssl()\n";
 		if (!ssl_socket_->lowest_layer().is_open()) {
 			socket_ = std::make_shared<tcp::socket>(io_context_);
 			socket_->open(tcp::v4());
@@ -1607,7 +1608,7 @@ void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window)
 	if(c->state == client_state::awaiting_connection){
 		//std::cout << "awaiting_connection try_reconnect()\n";
 		//c->try_reconnect();
-		//c->try_reconnect_ssl(); //TODO re-enable try_connect when I get tls working
+		c->try_reconnect_ssl(); //TODO re-enable try_connect when I get tls working
 	}
 }
 template<typename Func>
