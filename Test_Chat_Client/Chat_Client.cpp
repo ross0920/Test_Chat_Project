@@ -508,6 +508,9 @@ private:
 					//std::cout << "udp_socket->async_receive_from\n";
 					check_and_read_body_test(read_vc_msg_);
 				}
+				else {
+					udp_socket->close();
+				}
 				std::cout << "async_receive_from lambda body\n";
 				check_and_read_header_test();
 			});
@@ -559,6 +562,7 @@ private:
 					}
 					else {
 						std::cout << "error sending capture_ctx.ring_buffer data of size " << size << " error[" << ec << "]\n";
+						udp_socket->close();
 					}
 					//boost::asio::post(io_context_, [this, self] {check_and_send();});
 					check_and_send_test();
