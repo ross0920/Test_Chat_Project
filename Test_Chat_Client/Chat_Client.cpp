@@ -507,12 +507,12 @@ private:
 					}
 					//std::cout << "udp_socket->async_receive_from\n";
 					check_and_read_body_test(read_vc_msg_);
+					check_and_read_header_test();
 				}
 				else {
+					std::cout << "error: " << ec.message() << " close udp socket\n";
 					udp_socket->close();
 				}
-				std::cout << "async_receive_from lambda body\n";
-				check_and_read_header_test();
 			});
 	}
 	void check_and_read_body_test(std::shared_ptr<voice_chat_message> read_vc_msg_) {
@@ -985,6 +985,7 @@ private:
 				else {
 					std::cout << "decode_header fail\n";
 					state = client_state::awaiting_connection;
+					udp_socket->close();
 					ssl_socket_->lowest_layer().close();
 					msg_history.clear();
 					participant_names.clear();
