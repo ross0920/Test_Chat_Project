@@ -274,9 +274,17 @@ enum participant_state {
 };
 
 struct participant_client_data {
-	participant_client_data(chat_participant p) : p{ p }, ps{participant_state::neutral} {}
+	participant_client_data(chat_participant p) : p{ p }, ps{ participant_state::neutral }, enable_vc{ false, false } {}
 	chat_participant p;
 	participant_state ps;
+	std::pair<bool, bool> enable_vc;//my value for them //their value for me //if both are 1 then vc is enabled. this is 
+	//double checked on server.
+
+};
+
+struct client_vc_room {
+	client_vc_room() : ids{} {}
+	std::unordered_set<uint8_t>ids;
 };
 
 class chat_client : public std::enable_shared_from_this<chat_client>
@@ -296,6 +304,7 @@ public:
 	std::unordered_set<uint8_t>vc_partner_ids;
 	std::unordered_map<uint8_t, chat_participant>participant_map;
 	std::unordered_map<uint8_t, participant_client_data>participant_client_map;
+	std::unordered_map<uint8_t, client_vc_room> vc_rooms;
 	chat_participant me;
 	std::vector<std::string> msgs;
 	std::unordered_set<uint8_t> requests_;
@@ -525,14 +534,14 @@ private:
 			size_t write_size = requested;
 			void* pOut;
 			result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
-			std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
+			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
 				/*std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
 					" result = " << result << 
 					"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";*/
 				break;
 			}
-			std::cout << "write to rb_playback " << write_size << "\n";
+			//std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&playback_ctx.ring_buffer, write_size);
 			requested -= write_size;
@@ -560,13 +569,13 @@ private:
 					if (!ec) {
 						//std::cout << "send capture_ctx.ring_buffer data of size " << size << "\n";
 						ma_rb_commit_read(&capture_ctx.ring_buffer, size);
+						check_and_send_test();
 					}
 					else {
-						std::cout << "error sending capture_ctx.ring_buffer data of size " << size << " error[" << ec << "]\n";
+						//std::cout << "error sending capture_ctx.ring_buffer data of size " << size << " error[" << ec << "]\n";
 						udp_socket->close();
 					}
 					//boost::asio::post(io_context_, [this, self] {check_and_send();});
-					check_and_send_test();
 				}
 			);
 			return;
@@ -645,6 +654,17 @@ private:
 	void read_id(chat_message& m) {
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
 	}
+	void store_server_port(chat_message& m) {
+		uint8_t client_id = 0;
+		udp_port_server = 0;
+		std::memcpy(&client_id, m.body(), 1);
+			std::cout << "client_id[" << static_cast<int>(client_id) << "]"
+				<< "\nme.id[" << static_cast<int>(me.id) << "]\n";
+		std::memcpy(&udp_port_server, m.body() + 1, 2);
+		
+		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
+		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
+	}
 	void send_udp_port() {
 		chat_message msg;
 		std::string port = std::to_string(udp_port_client);
@@ -668,6 +688,37 @@ private:
 		requests_.emplace(sender_id);
 		state = client_state::receiving_request;
 	}
+	void send_vc_status(chat_message& m) {
+		uint8_t sender_id = 0;
+		std::memcpy(&sender_id, m.body(), 1);
+		auto it = participant_client_map.find(sender_id);
+		if (it == participant_client_map.end()) {
+			std::cout << "vc request from unknown user\n";
+			return;
+		}
+		uint8_t receiver_id = 0;
+		std::memcpy(&receiver_id, m.body() + 1, 1);
+		if (receiver_id != me.id) {
+			std::cout << "msg delivered to wrong recipient\n";
+			return;
+		}
+		uint8_t sender_enable_vc = 0;
+		std::memcpy(&sender_enable_vc, m.body() + 2, 1);
+		//TODO start from here and finish status check response
+
+		uint8_t receiver_enable_vc = participant_client_map.at(sender_id).enable_vc.first;
+
+		chat_message msg;
+		msg.body_length(sizeof(sender_id) + sizeof(receiver_id) + sizeof(sender_enable_vc) + sizeof(receiver_enable_vc) + sizeof(sender_enable_vc));
+		msg.set_message_type(message_type::vc_status_response);
+		std::memcpy(msg.body(), &sender_id, 1);
+		std::memcpy(msg.body() + 1, &receiver_id, 1);
+		std::memcpy(msg.body() + 2, &sender_enable_vc, 1);
+		std::memcpy(msg.body() + 3, &receiver_enable_vc, 1);
+
+		msg.encode_header();
+		write_ssl(msg);
+	}
 	void vc_request_rejected(chat_message& m) {
 		uint8_t receiver_id = 0;
 		std::memcpy(&receiver_id, m.body() + sizeof(uint8_t), sizeof(uint8_t));
@@ -679,10 +730,19 @@ private:
 	void vc_request_accepted(chat_message& m) {
 		std::cout << "vc_request_accepted()\n";
 		uint8_t count = 0;
-		vc_partner_ids.clear(); //only will get 2 vc participants currently
+		//moving to room model and getting away from this
+		//vc_partner_ids.clear(); //only will get 2 vc participants currently
 		std::memcpy(&count, m.body(), sizeof(count));
 		std::cout << "count[" << static_cast<int>(count) << "]\n";
 		if (count > max_participants) { return; }
+		vc_room_id = 0;
+		std::memcpy(&vc_room_id, m.body() + sizeof(uint8_t) + count, sizeof(vc_room_id));
+		std::cout << "vc_room_id[" << static_cast<int>(vc_room_id) << "]\n";
+		client_vc_room cvr{};
+		auto it = vc_rooms.find(vc_room_id);
+		if (it == vc_rooms.end()) {
+			vc_rooms.insert(std::make_pair(vc_room_id, cvr));
+		}
 		me.vc_state = voice_chat_state::in_session;
 		for (uint8_t i = 0; i < count; i++) {
 			uint8_t temp_id = 0;
@@ -690,13 +750,12 @@ private:
 			std::cout << "temp_id[" << static_cast<int>(temp_id) << "]\n";
 			if (temp_id != me.id) {
 				if (participant_map.find(temp_id) == participant_map.end()) { continue; }
+				if (vc_partner_ids.find(temp_id) != vc_partner_ids.end()) { continue; }
 				participant_client_map.at(temp_id).ps = participant_state::in_vc;//will throw error if not in map
 				vc_partner_ids.emplace(temp_id);
+				participant_client_map.at(temp_id).ps = participant_state::in_vc;
 			}
 		}
-		vc_room_id = 0;
-		std::memcpy(&vc_room_id, m.body() + sizeof(uint8_t) + count, sizeof(vc_room_id));
-		std::cout << "vc_room_id[" << static_cast<int>(vc_room_id) << "]\n";
 		udp_port_server = 0;
 		std::memcpy(&udp_port_server, m.body() + sizeof(uint8_t) + count + sizeof(vc_room_id), sizeof(udp_port_server));
 		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
@@ -715,6 +774,11 @@ private:
 		udp_port_server = 0;
 		std::memcpy(&udp_port_server, m.body() + sizeof(sender_id) + sizeof(vc_room_id), sizeof(udp_port_server));
 		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
+		if (!udp_socket->is_open()) {
+			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), 13));
+			auto client_ep = udp_socket->local_endpoint();
+			udp_port_client = client_ep.port();
+		}
 		send_udp_port();
 	}
 	void start_vc(ma_device& device_) {
@@ -773,6 +837,12 @@ private:
 		
 	}
 
+	void end_vc(chat_message& m) {
+		me.vc_state = voice_chat_state::none;
+		stop_playback();
+		stop_capture();
+	}
+
 	void remove_sender_from_chat(chat_message& m) {
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
@@ -782,6 +852,23 @@ private:
 		}
 		if (vc_partner_ids.find(sender_id) != vc_partner_ids.end()) {
 			vc_partner_ids.erase(sender_id);
+		}
+	}
+	void update_vc_partner_ids(chat_message& m) {
+		uint8_t enable_vc_option = 0;
+		std::memcpy(&enable_vc_option, m.body(), 1);
+		uint8_t receiver_id = 0;
+		std::memcpy(&receiver_id, m.body() + 1, 1);
+		auto iter = vc_partner_ids.find(receiver_id);
+		if (iter != vc_partner_ids.end() && enable_vc_option == 1) {
+			std::cout << "vc partner already added\n";
+			return;
+		}
+		if (iter == vc_partner_ids.end() && enable_vc_option == 1) {
+			vc_partner_ids.insert(receiver_id);
+		}
+		else if (iter != vc_partner_ids.end() && enable_vc_option == 0) {
+			vc_partner_ids.erase(receiver_id);
 		}
 	}
 	void process_msg_type(chat_message& m) {
@@ -865,11 +952,17 @@ private:
 				break;
 			}
 			case message_type::end_vc: {
-				remove_sender_from_vc(m);
+				//remove_sender_from_vc(m);
+				end_vc(m);
 				break;
 			}
 			case message_type::end_chat: {
 				remove_sender_from_chat(m);
+				break;
+			}
+			case message_type::send_udp_port:{
+				store_server_port(m);
+				send_udp_port();
 				break;
 			}
 			default:
@@ -975,18 +1068,22 @@ private:
 			});
 	}
 	void do_read_header_ssl() {
-		//std::cout << "do_read_header_ssl()\n";
+		std::cout << "do_read_header_ssl()\n";
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t) {
-				//std::cout << "decode_header()\n";
+				std::cout << "decode_header ssl()\n";
 				if (!ec && read_msg_.decode_header()) {
 					do_read_body_ssl();
 				}
 				else {
 					std::cout << "decode_header fail\n";
+					mic_test = false;
+					me.vc_state = voice_chat_state::none;
 					state = client_state::awaiting_connection;
+					udp_socket->cancel();
 					udp_socket->close();
+					udp_port_client = 0;
 					ssl_socket_->lowest_layer().close();
 					msg_history.clear();
 					participant_names.clear();
@@ -1030,7 +1127,7 @@ private:
 				if (!ec) {
 					std::string header = std::string(read_msg_.data(), chat_message::header_length);
 					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
-					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					std::cout << "read msg header[" << header << "] body [" << body << "]\n";
 					process_msg_type(read_msg_);
 				}
 				else {
@@ -1159,7 +1256,7 @@ private:
 		boost::asio::ssl::context& ssl_context,
 		const tcp::resolver::results_type& endpoints, GLFWwindow* window)
 		: io_context_(io_context), ssl_context_(ssl_context), socket_(std::make_shared<tcp::socket>(io_context)),
-		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), 0))), window(window), endpoints(endpoints),
+		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ 13))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, me()
 	{	
@@ -1407,8 +1504,36 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	for (; iter != c->participant_client_map.end(); ++iter) {
 		//ImGui::Text(c.participant_names[i].c_str());
 		ImGui::PushID(iter->second.p.id);
-		std::string participant_name_label = std::string(iter->second.p.name) + "##participant_" + std::to_string(iter->second.p.id);
-		if (ImGui::CollapsingHeader(participant_name_label.c_str())) {
+		//std::string participant_name_label = std::string(iter->second.p.name) + "##participant_" + std::to_string(iter->second.p.id);
+		std::string participant_name_label = std::string(iter->second.p.name);
+		ImGui::Text(participant_name_label.c_str());
+		ImGui::SameLine();
+		if (ImGui::Checkbox("", &iter->second.enable_vc.first)) {
+			//if (iter->second.enable_vc.first) {
+				std::cout << "sending vc request\n";
+				chat_message msg;
+				uint8_t sender_id = c->me.id;
+				uint8_t receiver_id = iter->second.p.id;
+				uint8_t enable_vc = iter->second.enable_vc.first ? 1 : 0;
+				std::cout << "Send request sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
+				msg.body_length(sizeof(sender_id) + sizeof(receiver_id) + sizeof(enable_vc));
+				msg.set_message_type(message_type::vc_status_check);
+				std::memcpy(msg.body(), &sender_id, 1);
+				std::memcpy(msg.body() + 1, &receiver_id, 1);
+				std::memcpy(msg.body() + 2, &enable_vc, 1);
+				msg.encode_header();
+				c->write_ssl(msg);//TODO
+				iter->second.ps = participant_state::sending_vc_request;
+		//	}
+			/*else {
+				chat_message msg;
+				uint8_t sender_id = c->me.id;
+				uint8_t receiver_id = iter->second.p.id;
+				uint8_t enable_vc = iter->second.enable_vc.first ? 1 : 0;
+				std::cout << "disabled\n";
+			}*/
+		}
+		/*if (ImGui::CollapsingHeader(participant_name_label.c_str())) {
 			ImGui::Indent();
 			voice_chat_state vc_state = iter->second.p.vc_state;
 			//bool recieving_request = c.participants[i].recieving_request;
@@ -1450,8 +1575,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 							iter->second.ps = participant_state::neutral;
 						}
 						ImGui::PopStyleColor(3);
-						ImGui::PopID();
-						
+						ImGui::PopID();						
 					}
 				}
 				else {
@@ -1474,6 +1598,27 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 						iter->second.ps = participant_state::sending_vc_request;
 					}
 					ImGui::EndDisabled();
+					if (iter->second.ps == participant_state::in_vc) {
+						ImGui::SameLine();
+						int id = 1;
+						ImGui::PushID(id);
+						ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
+						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
+						ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(0.0f, 0.8f, 0.8f));
+						if (ImGui::Button("X")) {
+							chat_message msg;
+							uint8_t sender_id = c->me.id;
+							msg.body_length(sizeof(sender_id));
+							msg.set_message_type(message_type::end_vc);
+							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
+							msg.encode_header();
+							c->write_ssl(msg);
+							iter->second.ps = participant_state::neutral;
+						}
+						ImGui::PopStyleColor(3);
+						ImGui::PopID();
+
+					}
 				}
 				if (iter->second.ps == participant_state::requesting_vc) {
 						ImGui::Text("Accept request?");
@@ -1507,7 +1652,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 				
 			}
 			ImGui::Unindent();
-		}
+		}*/
 		ImGui::PopID();
 	}
 	ImGui::EndChild();
@@ -1846,7 +1991,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	ma_result result;
 	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
-	std::cout << "total_bytes playback = " << total_bytes << "\n";
+	//std::cout << "total_bytes playback = " << total_bytes << "\n";
 	size_t size = total_bytes;
 	void* pOut;
 	result = ma_rb_acquire_read(&ctx->ring_buffer, &size, &pOut);
@@ -1858,7 +2003,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	}
 	std::memcpy(pFramesOut, pOut, size);
 	ma_rb_commit_read(&ctx->ring_buffer, size);
-	std::cout << "read rb_playback " << size << "\n";
+	//std::cout << "read rb_playback " << size << "\n";
 	if (size < total_bytes) {
 		//	std::cout << "playback size < total_bytes : " << size << " < " << total_bytes << "\n";
 		std::memset((uint8_t*)pFramesOut + size, 0, total_bytes - size);

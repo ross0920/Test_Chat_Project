@@ -33,7 +33,10 @@ enum class message_type : uint8_t {
 	mic_test = 24,
 	end_vc = 25,
 	end_chat = 26,
-	bad_message = 27
+	vc_status_check = 27,
+	vc_status_response = 28,
+	vc_partner_update = 29,
+	bad_message = 30
 };
 
 class chat_message {
@@ -96,13 +99,14 @@ public:
 			return false;
 		}
 		if (msg_type < message_type(message_type::chat) || msg_type > message_type(message_type::bad_message)) {
-		//	std::cout << "bad msg_type: " << std::to_string(static_cast<int>(msg_type)) << "\n";
+			std::cout << "bad msg_type: " << std::to_string(static_cast<int>(msg_type)) << "\n";
 			return false;
 		}
 		if (body_length_ > max_body_length) {
 			body_length_ = 0;
 			return false;
 		}
+		std::cout << "header decoded success\n";
 		return true;
 	}
 	void encode_header() {

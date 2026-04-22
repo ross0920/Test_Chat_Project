@@ -3,9 +3,11 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <utility>
 #include "Chat_Message.h"
 #include "Voice_Chat_Message.h"
 #include "boost/asio.hpp"
+#include "Typedefs.h"
 
 enum class voice_chat_state : uint8_t {
 	none = 0,
@@ -48,6 +50,18 @@ public:
 	virtual void stop_read_vc_rb() {};
 	virtual bool get_feedback_option() { return false; };
 	virtual void set_feedback_option(bool val) { }
+	virtual std::unordered_set<uint8_t>* get_vc_partner_ids() {
+		return nullptr;
+	};
+	virtual std::unordered_set<uint8_t>* get_vc_requestor_ids() {
+		return nullptr;
+	};
+	virtual uint8_t get_vc_enabled() {
+		return 0;
+	}
+	virtual void set_vc_enabled(uint8_t val) {
+	}
+
 	std::size_t serialized_size() {
 		size_t size = 0;
 		size += sizeof(id);
