@@ -92,21 +92,21 @@ public:
 			body_length_ = std::stoi(std::string(header + msg_type_length, 4));
 		}
 		catch (const std::invalid_argument& e) {
-		std::cout << " std::stoi(std::string(header + 2, 4))\n";
+		//std::cout << " std::stoi(std::string(header + 2, 4))\n";
 			std::string text = "bad";
 			body_length_ = 3;
 			std::memcpy(body(), text.c_str(), body_length());
 			return false;
 		}
 		if (msg_type < message_type(message_type::chat) || msg_type > message_type(message_type::bad_message)) {
-			std::cout << "bad msg_type: " << std::to_string(static_cast<int>(msg_type)) << "\n";
+			//std::cout << "bad msg_type: " << std::to_string(static_cast<int>(msg_type)) << "\n";
 			return false;
 		}
 		if (body_length_ > max_body_length) {
 			body_length_ = 0;
 			return false;
 		}
-		std::cout << "header decoded success\n";
+		//std::cout << "header decoded success\n";
 		return true;
 	}
 	void encode_header() {
@@ -122,6 +122,7 @@ public:
 
 		//std::cout << "encode_header[" << header << "]\n";
 		std::memcpy(data_, header, header_length);
+		
 	}
 private:
 	char data_[header_length + max_body_length];

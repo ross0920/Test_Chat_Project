@@ -511,7 +511,7 @@ private:
 				//std::cout << "async_receive_from lambda body\n";
 				if (!ec) {
 					if (!read_vc_msg_->decode_header()) {
-						//std::cout << "udp_socket->async_receive_from decode header fail\n";
+						std::cout << "udp_socket->async_receive_from decode header fail\n";
 						check_and_read_header_test();
 						return;
 					}
@@ -536,9 +536,9 @@ private:
 			result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
 			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
-				/*std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
+				std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
 					" result = " << result << 
-					"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";*/
+					"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";
 				break;
 			}
 			//std::cout << "write to rb_playback " << write_size << "\n";

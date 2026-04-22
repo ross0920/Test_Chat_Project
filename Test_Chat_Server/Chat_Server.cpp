@@ -541,10 +541,10 @@ public:
 		std::memcpy(msg.body() + 1, &udp_port, sizeof(udp_port));
 		msg.body_length(1 + sizeof(udp_port));
 		msg.encode_header();
-		std::cout << "send_server_udp_port() - \n\tclient_id = "
-			<< static_cast<int>(client_id)
-			<< "\n\tudp_port = "
-			<< static_cast<int>(udp_port) << "\n";
+		//std::cout << "send_server_udp_port() - \n\tclient_id = "
+		//	<< static_cast<int>(client_id)
+		//	<< "\n\tudp_port = "
+		//	<< static_cast<int>(udp_port) << "\n";
 		if (participant_map.find(client_id) != participant_map.end()) {
 			participant_map.at(client_id)->deliver(msg);
 		}
@@ -624,9 +624,9 @@ public:
 		std::memcpy(&sender_enable_vc, m.body() + 2, 1);
 		auto iter_a = participant_map.find(sender_id);
 		auto iter_b = participant_map.find(receiver_id);
-		std::cout << "\tsender_id[" << static_cast<int>(sender_id) << "]\n"
-			<< "\treceiver_id[" << static_cast<int>(receiver_id) << "]\n"
-			<< "\tsender_enable_vc[" << static_cast<int>(sender_enable_vc) << "]\n";
+		//std::cout << "\tsender_id[" << static_cast<int>(sender_id) << "]\n"
+		//	<< "\treceiver_id[" << static_cast<int>(receiver_id) << "]\n"
+		//	<< "\tsender_enable_vc[" << static_cast<int>(sender_enable_vc) << "]\n";
 		if (iter_a == participant_map.end()) {
 			std::cout << "\tinvalid sender\n";
 			return;
@@ -994,20 +994,20 @@ public:
 	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
 		//std::cout << "write_vc_msg_to_rb()\n";
 		if (vc_partner_ids.size() == 0) { 
-			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
+			//std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
 			return; }
 		void* pwrite_void = nullptr;
 		size_t size = recv_vc_msg_->body_length();
 		size_t requested = size;
-		std::cout << "size = " << size << "\n";
+		//std::cout << "size = " << size << "\n";
 		size_t total_written = 0;
 		ma_result result;
 		uint8_t* data = (uint8_t*)recv_vc_msg_->body();
 		while (requested > 0) {
 			size = requested;
-			std::cout << "write size request = " << size << "\n";
+			//std::cout << "write size request = " << size << "\n";
 			result = ma_rb_acquire_write(&vc_rb, &size, &pwrite_void);
-			std::cout << "actual write size = " << size << "\n";
+			//std::cout << "actual write size = " << size << "\n";
 			if (result != MA_SUCCESS || size == 0) {
 				std::cerr << "fail server write acquire size = " << size << "\n";
 				break;
@@ -1215,8 +1215,8 @@ private:
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
 				if (!ec && read_msg_.decode_header()) {
-					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
-					//std::cout << "read_msg_header[" << header << "]\n";					
+					std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					std::cout << "read_msg_header[" << header << "]\n";					
 					do_read_body_ssl();
 
 				}
@@ -1234,8 +1234,8 @@ private:
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
 				if (!ec && read_msg_.decode_header()) {
-					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
-					//std::cout << "read_msg_header[" << header << "]\n";					
+					std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					std::cout << "read_msg_header[" << header << "]\n";					
 					do_read_body();
 					
 				}
@@ -1246,16 +1246,16 @@ private:
 		});
 	}
 	void do_read_body_ssl() {
-		//std::cout << "do_read_body_ssl()\n";
+		std::cout << "do_read_body_ssl()\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(ssl_socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
 				if (!ec) {
-					std::string header = std::string(read_msg_.data(), chat_message::header_length);
-					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
-					std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					//std::string body = std::string(read_msg_.body(), read_msg_.body_length());
+					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
 					//validate client is authorized!! TODO
 					if (!authenticated) {
 						if (verify_authorization_response(read_msg_)) {
@@ -1263,7 +1263,9 @@ private:
 							m.body_length(session_token.length());//16 bytes/chars
 							m.set_message_type(message_type::authentication_approve);
 							std::memcpy(m.body(), session_token.c_str(), m.body_length());
+							std::cout << "verify auth encode header\n";
 							m.encode_header();
+							std::cout << "header encoded\n";
 							deliver(m);
 							authenticated = true;
 						}
@@ -1300,7 +1302,7 @@ private:
 						//name is preceded by uint8_t id
 						std::string name(read_msg_.body() + sizeof(uint8_t), read_msg_.body_length() - sizeof(uint8_t));
 						room_->leave(shared_from_this());
-						std::cout << "new name = " << name << "\n";
+						//std::cout << "new name = " << name << "\n";
 						if (!name.empty()) {
 							uint8_t id = 0;
 							std::memcpy(&id, read_msg_.body(), sizeof(uint8_t));
@@ -1350,7 +1352,6 @@ private:
 						break;
 					}
 					case(message_type::vc_status_check): {
-						std::cout << "status check msgtype received\n";
 						room_->update_vc_status_test(read_msg_);
 						//room_->get_receiver_vc_status(read_msg_);
 						//don't do a status check. 
@@ -1506,8 +1507,8 @@ private:
 				if (!ec) {
 					std::string header = std::string(msg.data(), chat_message::header_length);
 					std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
-					std::cout << "write msg header[" << header << "] body [" << body << "]\n";
-						std::cout << "!ec\n";
+					//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+						//std::cout << "!ec\n";
 					write_msgs_.pop_front();
 					if (!write_msgs_.empty()) {
 						do_write_ssl();
