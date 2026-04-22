@@ -541,7 +541,7 @@ private:
 					"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";
 				break;
 			}
-			//std::cout << "write to rb_playback " << write_size << "\n";
+			std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&playback_ctx.ring_buffer, write_size);
 			requested -= write_size;
