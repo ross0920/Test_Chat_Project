@@ -541,10 +541,10 @@ public:
 		std::memcpy(msg.body() + 1, &udp_port, sizeof(udp_port));
 		msg.body_length(1 + sizeof(udp_port));
 		msg.encode_header();
-		//std::cout << "send_server_udp_port() - \n\tclient_id = "
-		//	<< static_cast<int>(client_id)
-		//	<< "\n\tudp_port = "
-		//	<< static_cast<int>(udp_port) << "\n";
+		std::cout << "send_server_udp_port() - \n\tclient_id = "
+			<< static_cast<int>(client_id)
+			<< "\n\tudp_port = "
+			<< static_cast<int>(udp_port) << "\n";
 		if (participant_map.find(client_id) != participant_map.end()) {
 			participant_map.at(client_id)->deliver(msg);
 		}
@@ -615,7 +615,7 @@ public:
 		}
 	}
 	void update_vc_status_test(chat_message& m) {
-		std::cout << "update_vc_status()\n";
+		std::cout << "update_vc_status_test()\n";
 		uint8_t sender_id = 0;
 		std::memcpy(&sender_id, m.body(), 1);
 		uint8_t receiver_id = 0;
@@ -624,9 +624,9 @@ public:
 		std::memcpy(&sender_enable_vc, m.body() + 2, 1);
 		auto iter_a = participant_map.find(sender_id);
 		auto iter_b = participant_map.find(receiver_id);
-		//std::cout << "\tsender_id[" << static_cast<int>(sender_id) << "]\n"
-		//	<< "\treceiver_id[" << static_cast<int>(receiver_id) << "]\n"
-		//	<< "\tsender_enable_vc[" << static_cast<int>(sender_enable_vc) << "]\n";
+		std::cout << "\tsender_id[" << static_cast<int>(sender_id) << "]\n"
+			<< "\treceiver_id[" << static_cast<int>(receiver_id) << "]\n"
+			<< "\tsender_enable_vc[" << static_cast<int>(sender_enable_vc) << "]\n";
 		if (iter_a == participant_map.end()) {
 			std::cout << "\tinvalid sender\n";
 			return;
@@ -652,9 +652,14 @@ public:
 			uint8_t self_send = sender_id == receiver_id ? 1 : 0;
 			if (p.first == sender_id) {
 				vc_hashmap.insert(std::make_pair(p, std::make_pair(sender_enable_vc, self_send)));
+				std::cout << "p.first == sender_id\n\t[sender_enable_vc = " << static_cast<int>(sender_enable_vc) << "]"
+					<< "\n\t[self_send = " << static_cast<int>(self_send) << "]\n";
 			}			
 			else {
 				vc_hashmap.insert(std::make_pair(p, std::make_pair(self_send, sender_enable_vc)));
+				vc_hashmap.insert(std::make_pair(p, std::make_pair(sender_enable_vc, self_send)));
+				std::cout << "NOT p.first == sender_id\n\t[sender_enable_vc = " << static_cast<int>(sender_enable_vc) << "]"
+					<< "\n\t[self_send = " << static_cast<int>(self_send) << "]\n";
 			}
 		}
 
@@ -664,13 +669,13 @@ public:
 			participant_map.at(client_a_id)->get_vc_partner_ids()->insert(client_b_id);
 			participant_map.at(client_b_id)->get_vc_partner_ids()->insert(client_a_id);
 			if (participant_map.at(client_a_id)->get_vc_enabled() == 0) {
-				std::cout << "\tturn on client_a vc\n";
+				std::cout << "turn on client_a [" << static_cast<int>(client_a_id) << "]\n";
 				participant_map.at(client_a_id)->start_read_vc_rb();
 				participant_map.at(client_a_id)->set_vc_enabled(1);
 				send_server_udp_port(client_a_id);
 			}
 			if (participant_map.at(client_b_id)->get_vc_enabled() == 0) {
-				std::cout << "\tturn on client_b vc\n";
+				std::cout << "turn on client_b [" << static_cast<int>(client_b_id) << "]\n";
 				participant_map.at(client_b_id)->start_read_vc_rb();
 				participant_map.at(client_b_id)->set_vc_enabled(1);
 				send_server_udp_port(client_b_id);
@@ -680,10 +685,14 @@ public:
 			auto iter_b_in_a = participant_map.at(client_a_id)->get_vc_partner_ids()->find(client_b_id);
 			if (iter_b_in_a != participant_map.at(client_a_id)->get_vc_partner_ids()->end()) {
 				participant_map.at(client_a_id)->get_vc_partner_ids()->erase(client_b_id);
+				std::cout << "turn off client_b [" << static_cast<int>(client_b_id) << "] in client_a[" 
+					<< static_cast<int>(client_a_id) <<  "] vc\n";
 			}
 			auto iter_a_in_b = participant_map.at(client_b_id)->get_vc_partner_ids()->find(client_a_id);
 			if (iter_a_in_b != participant_map.at(client_b_id)->get_vc_partner_ids()->end()) {
 				participant_map.at(client_b_id)->get_vc_partner_ids()->erase(client_a_id);
+				std::cout << "turn off client_a [" << static_cast<int>(client_a_id) << "] in client_b["
+					<< static_cast<int>(client_b_id) << "] vc\n";
 			}
 			std::cout << "\tturn off client vc\n";
 			//stop_client_vc(sender_id);
@@ -994,7 +1003,7 @@ public:
 	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
 		//std::cout << "write_vc_msg_to_rb()\n";
 		if (vc_partner_ids.size() == 0) { 
-			//std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
+			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
 			return; }
 		void* pwrite_void = nullptr;
 		size_t size = recv_vc_msg_->body_length();
@@ -1049,12 +1058,12 @@ public:
 			udp_socket_->async_send_to(buffer, *get_client_udp_endpoint(),
 				[this, self, size, iter, msg_copy](boost::system::error_code ec, std::size_t bytes) {
 					if (ec) {
-						//std::cout << "write to client [" << iter->second->id << "][" << iter->second->name << "] fail\n";
+						std::cout << "write to client [" << *iter << "] fail\n";
 					}
 					else {
-						//std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
-							//<< " write to client size [" << size << "]\n\t" 
-							//<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";
+						std::cout << "write to client [" << static_cast<int>(*iter) << "] @ port " 
+							<< " write to client size [" << size << "]\n\t" 
+							<< get_client_udp_endpoint()->port() << " ip " << get_client_udp_endpoint()->address() << " success\n";
 					}
 				}
 			);

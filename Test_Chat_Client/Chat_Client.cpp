@@ -934,6 +934,7 @@ private:
 			case message_type::start_vc: {
 				std::string token = decode_session_token(m);
 				if (token == session_token) {
+					std::cout << "session token validated. start_capture and playback\n";
 					start_capture();
 					start_playback();
 				}
