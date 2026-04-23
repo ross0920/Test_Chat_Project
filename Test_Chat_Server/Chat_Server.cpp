@@ -276,6 +276,28 @@ public:
 	std::unordered_map<uint8_t, chat_participant_ptr> participant_map;
 	std::unordered_map<uint8_t, std::shared_ptr<voice_chat_room>> vc_rooms;
 	std::unordered_map<uint8_t, std::string> tokens;
+
+	void clean_vc_hash(uint8_t id) {
+		auto iter = vc_hashmap.begin();
+		for (; iter != vc_hashmap.end();) {
+			if (iter->first.first == id) {
+				participant_map.at(iter->first.second)->get_vc_partner_ids()->erase(id);
+				iter->second.first = 0;
+			}
+			else if (iter->first.second == id) {
+				participant_map.at(iter->first.first)->get_vc_partner_ids()->erase(id);
+				iter->second.second = 0;
+			}
+			bool remove = iter->second.first == 0 && iter->second.second == 0;
+			if (remove) {
+				iter = vc_hashmap.erase(iter);
+			}
+			else {
+				++iter;
+			}
+		}
+	}
+
 	bool route_udp(uint8_t vc_room_id_, std::shared_ptr<voice_chat_message> recv_vc_msg_) {
 		/*if (vc_rooms.find(vc_room_id_) != vc_rooms.end()) {
 			//std::cout << "routing message to vc_room_id_[" << static_cast<int>(vc_room_id_) << "]\n";
@@ -388,12 +410,13 @@ public:
 		}
 	}
 	void leave(chat_participant_ptr participant) {
-		participant->stop_read_vc_rb();
+		//participant->stop_read_vc_rb();
 		//leave_vc_room(participant);//TODO get rid of this
 		//leave any vc rooms first
 		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " leave chat room\n";
 		//remove token
 		if (!participant->id) { std::cout << "participant id is 0. not leaving room\n"; return; }
+		clean_vc_hash(participant->id);
 		send_room_leave_notifications(participant);
 		auto it = tokens.find(participant->id);
 		std::cout << "search for token @ participant id " << static_cast<int>(participant->id) << "\n";
@@ -402,6 +425,7 @@ public:
 		}
 		//leave chat room
 		release_id(participant->id);
+		participant->set_vc_enabled(0);
 		participant_map.erase(participant->id);
 		participant->id = 0;//3/26/26
 	}
