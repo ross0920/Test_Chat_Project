@@ -1027,7 +1027,7 @@ public:
 	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
 		//std::cout << "write_vc_msg_to_rb()\n";
 		if (vc_partner_ids.size() == 0) { 
-			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
+			//std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
 			return; }
 		void* pwrite_void = nullptr;
 		size_t size = recv_vc_msg_->body_length();
@@ -1082,12 +1082,12 @@ public:
 			udp_socket_->async_send_to(buffer, *get_client_udp_endpoint(),
 				[this, self, size, iter, msg_copy](boost::system::error_code ec, std::size_t bytes) {
 					if (ec) {
-						std::cout << "write to client [" << *iter << "] fail\n";
+						//std::cout << "write to client [" << *iter << "] fail\n";
 					}
 					else {
-						std::cout << "write to client [" << static_cast<int>(*iter) << "] @ port " 
-							<< " write to client size [" << size << "]\n\t" 
-							<< get_client_udp_endpoint()->port() << " ip " << get_client_udp_endpoint()->address() << " success\n";
+						//std::cout << "write to client [" << static_cast<int>(*iter) << "] @ port " 
+							//<< " write to client size [" << size << "]\n\t" 
+							//<< get_client_udp_endpoint()->port() << " ip " << get_client_udp_endpoint()->address() << " success\n";
 					}
 				}
 			);

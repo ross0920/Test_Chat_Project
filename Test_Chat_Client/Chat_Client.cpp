@@ -275,6 +275,11 @@ enum participant_state {
 
 struct participant_client_data {
 	participant_client_data(chat_participant p) : p{ p }, ps{ participant_state::neutral }, enable_vc{ false, false } {}
+	participant_client_data(participant_client_data& obj) {
+		p = obj.p;
+		ps = obj.ps;
+		enable_vc = obj.enable_vc;
+	}
 	chat_participant p;
 	participant_state ps;
 	std::pair<bool, bool> enable_vc;//my value for them //their value for me //if both are 1 then vc is enabled. this is 
@@ -1498,15 +1503,16 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	ImGui::BeginChild("ChildL", ImVec2(150.0f, 600), ImGuiChildFlags_None, scroll_flags);
 	ImGui::Text("Room");
 	ImGui::Separator();	
-	for (int i = 0; i < c->participant_names.size(); i++) {
-		ImGui::Text(c->participant_names[i].c_str());
-	}
+	/*for (int i = 0; i < c->participant_names.size(); i++) {
+		std::string n = c->participant_names[i];
+		//ImGui::Text(n.c_str());
+	}*/
 	std::unordered_map<uint8_t, participant_client_data>::iterator iter = c->participant_client_map.begin();
 	for (; iter != c->participant_client_map.end(); ++iter) {
 		//ImGui::Text(c.participant_names[i].c_str());
 		ImGui::PushID(iter->second.p.id);
 		//std::string participant_name_label = std::string(iter->second.p.name) + "##participant_" + std::to_string(iter->second.p.id);
-		std::string participant_name_label = std::string(iter->second.p.name);
+		std::string participant_name_label = std::string(iter->second.p.name) + "#" + std::to_string(iter->second.p.id);
 		ImGui::Text(participant_name_label.c_str());
 		ImGui::SameLine();
 		if (ImGui::Checkbox("", &iter->second.enable_vc.first)) {
