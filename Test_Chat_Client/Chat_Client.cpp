@@ -1074,11 +1074,11 @@ private:
 			});
 	}
 	void do_read_header_ssl() {
-		std::cout << "do_read_header_ssl()\n";
+		//std::cout << "do_read_header_ssl()\n";
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t) {
-				std::cout << "decode_header ssl()\n";
+				//std::cout << "decode_header ssl()\n";
 				if (!ec && read_msg_.decode_header()) {
 					do_read_body_ssl();
 				}
@@ -1133,7 +1133,7 @@ private:
 				if (!ec) {
 					std::string header = std::string(read_msg_.data(), chat_message::header_length);
 					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
-					std::cout << "read msg header[" << header << "] body [" << body << "]\n";
+					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
 					process_msg_type(read_msg_);
 				}
 				else {

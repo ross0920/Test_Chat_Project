@@ -686,7 +686,15 @@ public:
 					<< "\n\t[self_send = " << static_cast<int>(self_send) << "]\n";
 			}
 		}
-
+		std::cout << "print vc_hashmap:\n";
+		auto debug_hashmap_iter = vc_hashmap.begin();
+		for (; debug_hashmap_iter != vc_hashmap.end(); ++debug_hashmap_iter) {
+			std::cout << "\t["
+				<< static_cast<int>(debug_hashmap_iter->first.first) << ", "
+				<< static_cast<int>(debug_hashmap_iter->first.second) << "]["
+				<< static_cast<int>(debug_hashmap_iter->second.first) << ", "
+				<< static_cast<int>(debug_hashmap_iter->second.second) << "]\n";
+		}
 		turn_on_client_vc = (vc_hashmap.at(p).first & vc_hashmap.at(p).second);
 
 		if (turn_on_client_vc == 1) {
@@ -729,8 +737,17 @@ public:
 				participant_map.at(client_b_id)->set_vc_enabled(0);
 			}
 		}
+		auto pciter_a = participant_map.at(client_a_id)->get_vc_partner_ids()->begin();
+		auto pciter_b = participant_map.at(client_b_id)->get_vc_partner_ids()->begin();
+		std::cout << "client_a vc_partner_ids:\n";
+		for(; pciter_a != participant_map.at(client_a_id)->get_vc_partner_ids()->end(); ++pciter_a) {
+			std::cout << "\t[" << static_cast<int>(*pciter_a) << "]\n";
+		}
+		std::cout << "client_b vc_partner_ids:\n";
+		for (; pciter_b != participant_map.at(client_b_id)->get_vc_partner_ids()->end(); ++pciter_b) {
+			std::cout << "\t[" << static_cast<int>(*pciter_b) << "]\n";
+		}
 	}
-
 	void get_receiver_vc_status(chat_message& m) {
 		//don't need to do this shit
 		/*uint8_t sender_id = 0;
