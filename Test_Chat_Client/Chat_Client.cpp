@@ -80,7 +80,7 @@ constexpr float sample_rate = 48000.0f;
 constexpr ma_uint32 frame_size = 960;
 
 const size_t max_playback_size = 3840;
-const int buffer_size = 19200;
+const int buffer_size = 38400; //19200;
 
 ma_device_info* capture_devices;
 ma_uint32 capture_count = 0;
