@@ -569,6 +569,8 @@ private:
 			std::memcpy(m->body(), pOut, size);
 			auto buffer = boost::asio::buffer(m->data(), m->length());
 			auto self = shared_from_this();
+			std::cout << "send from ep port[" << udp_socket->local_endpoint().port() << "] ip[" << udp_socket->local_endpoint().address() << "]\n";
+
 			udp_socket->async_send_to(buffer, server_endpoint,
 				[this, self, size](boost::system::error_code ec, std::size_t bytes) {
 					//std::cout << "TRY SEND capture data to server\n";
