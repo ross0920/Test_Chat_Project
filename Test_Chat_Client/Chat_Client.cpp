@@ -94,6 +94,8 @@ std::vector<char*> playback_devices_names{};
 
 bool mic_test = false;
 
+const int  udp_port_number = 0;
+
 class chat_client;
 class SpectralSuppressor;
 class HighPassFilter {
@@ -690,7 +692,7 @@ private:
 		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
 		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
 		if (!udp_socket->is_open()) {
-			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), 13));
+			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), udp_port_number));
 			auto client_ep = udp_socket->local_endpoint();
 			udp_port_client = client_ep.port();
 		}
@@ -805,7 +807,7 @@ private:
 		std::memcpy(&udp_port_server, m.body() + sizeof(sender_id) + sizeof(vc_room_id), sizeof(udp_port_server));
 		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
 		if (!udp_socket->is_open()) {
-			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), 13));
+			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), udp_port_number));
 			auto client_ep = udp_socket->local_endpoint();
 			udp_port_client = client_ep.port();
 		}
@@ -1287,7 +1289,7 @@ private:
 		boost::asio::ssl::context& ssl_context,
 		const tcp::resolver::results_type& endpoints, GLFWwindow* window)
 		: io_context_(io_context), ssl_context_(ssl_context), socket_(std::make_shared<tcp::socket>(io_context)),
-		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ 13))), window(window), endpoints(endpoints),
+		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ udp_port_number))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, me()
 	{	
