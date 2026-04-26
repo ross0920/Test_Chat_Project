@@ -537,19 +537,19 @@ private:
 		size_t requested = read_vc_msg_->body_length();
 		size_t total_written = 0;
 		uint8_t* data = (uint8_t*)read_vc_msg_->body();
-		std::wcout << "udp ssl read size = " << requested << "\n";
+		//std::wcout << "udp ssl read size = " << requested << "\n";
 		while (requested > 0) {
 			size_t write_size = requested;
 			void* pOut;
 			result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
 			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
-				std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
-					" result = " << result << 
-					"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";
+				//std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
+					//" result = " << result << 
+					//"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";
 				break;
 			}
-			std::cout << "write to rb_playback " << write_size << "\n";
+			//std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&playback_ctx.ring_buffer, write_size);
 			requested -= write_size;
