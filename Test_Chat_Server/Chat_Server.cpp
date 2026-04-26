@@ -558,6 +558,25 @@ public:
 			participant_map.at(sender_id)->get_vc_partner_ids()->erase(receiver_id);
 		}
 	}
+	std::shared_ptr<boost::asio::ip::udp::endpoint> get_client_udp_endpoint(const uint8_t& client_id) {
+		auto iter = participant_map.find(client_id);
+		if (iter == participant_map.end()) { return nullptr; }
+		return iter->second->get_client_udp_endpoint();
+	}
+	void print_client_vp_lists() {
+		auto full_map_iter = participant_map.begin();
+		for (; full_map_iter != participant_map.end(); ++full_map_iter) {
+			std::string name = full_map_iter->second->name + "#" + std::to_string(static_cast<int>(full_map_iter->first));
+			std::cout << "vc_partner_ids for " << name << "[\n";
+			auto id_iter = full_map_iter->second->get_vc_partner_ids()->begin();
+			for (; id_iter != full_map_iter->second->get_vc_partner_ids()->end(); ++id_iter) {
+				std::cout << "\t[" << static_cast<int>(*id_iter) << "]\n";
+			}
+			std::cout << "]\n";
+		}
+
+
+	}
 	void send_server_udp_port(uint8_t& client_id) {
 		chat_message msg;
 		msg.set_message_type(message_type::send_udp_port);
@@ -639,6 +658,7 @@ public:
 		}
 	}
 	void update_vc_status_test(chat_message& m) {
+		print_client_vp_lists();
 		std::cout << "update_vc_status_test()\n";
 		uint8_t sender_id = 0;
 		std::memcpy(&sender_id, m.body(), 1);
@@ -1096,23 +1116,28 @@ public:
 			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
 			size_t size = msg_copy->length();
 			//std::cout << "do async send\n";
-			if (get_client_udp_endpoint() == nullptr) { continue; } //was crashing server. TODO find better solution
-			udp_socket_->async_send_to(buffer, *get_client_udp_endpoint(),
-				[this, self, size, iter, msg_copy](boost::system::error_code ec, std::size_t bytes) {
+			
+			std::shared_ptr<boost::asio::ip::udp::endpoint> ep = room_->get_client_udp_endpoint(*iter);
+			if (ep == nullptr) { continue; } //was crashing server. TODO find better solution
+			
+			udp_socket_->async_send_to(buffer, *ep,
+				[this, self, size, iter, msg_copy, ep](boost::system::error_code ec, std::size_t bytes) {
 					if (ec) {
 						//std::cout << "write to client [" << *iter << "] fail\n";
 					}
 					else {
-						std::cout << "write to client [" << static_cast<int>(*iter) << "] @ port " 
+						/*std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
+							<< " to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
 							<< " write to client size [" << size << "]\n\t" 
-							<< get_client_udp_endpoint()->port() << " ip " << get_client_udp_endpoint()->address() << " success\n";
-					}
+							<< ep->port() << " ip " << ep->address() << " success\n";*/
+					}	
 				}
 			);
 			//std::cout << "async send complete\n";
 		}
 		//don't want to commit read for every person, but need to only commit after all sends have completed??
 		//std::cout << "get sender\n";
+		
 		//std::cout << "at id " << static_cast<int>(sender_id) << "\n";
 		//std::cout << "commit read of size " << recv_vc_msg_->body_length() << "\n";
 		//std::cout << "send to " << sender->name << "\n";

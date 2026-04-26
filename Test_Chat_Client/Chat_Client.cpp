@@ -661,6 +661,22 @@ private:
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
 	}
 	void store_server_port(chat_message& m) {
+		/*uint8_t sender_id = 0;
+		vc_partner_ids.clear(); //only will get 2 vc participants currently
+		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
+		if (sender_id != me.id) { return; }
+		me.vc_state = voice_chat_state::in_session;
+		participant_client_map.at(sender_id).ps = participant_state::in_vc;
+		vc_room_id = 0;
+		std::memcpy(&vc_room_id, m.body() + sizeof(sender_id), sizeof(vc_room_id));
+		udp_port_server = 0;
+		std::memcpy(&udp_port_server, m.body() + sizeof(sender_id) + sizeof(vc_room_id), sizeof(udp_port_server));
+		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
+		if (!udp_socket->is_open()) {
+			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), 13));
+			auto client_ep = udp_socket->local_endpoint();
+			udp_port_client = client_ep.port();
+		}*/
 		uint8_t client_id = 0;
 		udp_port_server = 0;
 		std::memcpy(&client_id, m.body(), 1);
@@ -670,6 +686,11 @@ private:
 		
 		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
 		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
+		if (!udp_socket->is_open()) {
+			udp_socket = std::make_shared<udp::socket>(io_context_, udp::endpoint(udp::v4(), 13));
+			auto client_ep = udp_socket->local_endpoint();
+			udp_port_client = client_ep.port();
+		}
 	}
 	void send_udp_port() {
 		chat_message msg;
