@@ -576,8 +576,7 @@ private:
 				[this, self, size](boost::system::error_code ec, std::size_t bytes) {
 					//std::cout << "TRY SEND capture data to server\n";
 					if (!ec) {
-						std::cout << "send from ep port[" << udp_socket->local_endpoint().port() << "] ip[" << udp_socket->local_endpoint().address() << "]\n";
-
+						//std::cout << "send from ep port[" << udp_socket->local_endpoint().port() << "] ip[" << udp_socket->local_endpoint().address() << "]\n";
 						//std::cout << "send capture_ctx.ring_buffer data of size " << size << "\n";
 						ma_rb_commit_read(&capture_ctx.ring_buffer, size);
 						check_and_send_test();
