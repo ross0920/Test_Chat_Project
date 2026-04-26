@@ -737,15 +737,16 @@ public:
 				participant_map.at(client_b_id)->set_vc_enabled(0);
 			}
 		}
-		auto pciter_a = participant_map.at(client_a_id)->get_vc_partner_ids()->begin();
-		auto pciter_b = participant_map.at(client_b_id)->get_vc_partner_ids()->begin();
-		std::cout << "client_a vc_partner_ids:\n";
-		for(; pciter_a != participant_map.at(client_a_id)->get_vc_partner_ids()->end(); ++pciter_a) {
-			std::cout << "\t[" << static_cast<int>(*pciter_a) << "]\n";
-		}
-		std::cout << "client_b vc_partner_ids:\n";
-		for (; pciter_b != participant_map.at(client_b_id)->get_vc_partner_ids()->end(); ++pciter_b) {
-			std::cout << "\t[" << static_cast<int>(*pciter_b) << "]\n";
+
+		auto full_map_iter = participant_map.begin();
+		for (; full_map_iter != participant_map.end(); ++full_map_iter) {
+			std::string name = full_map_iter->second->name + "#" + std::to_string(static_cast<int>(full_map_iter->first));
+			std::cout << "vc_partner_ids for " << name << "[\n";
+			auto id_iter = full_map_iter->second->get_vc_partner_ids()->begin();
+			for (; id_iter != full_map_iter->second->get_vc_partner_ids()->end(); ++id_iter) {
+				std::cout << "\t[" << static_cast<int>(*id_iter) << "]\n";
+			}
+			std::cout << "]\n";
 		}
 	}
 	void get_receiver_vc_status(chat_message& m) {
@@ -1102,9 +1103,9 @@ public:
 						//std::cout << "write to client [" << *iter << "] fail\n";
 					}
 					else {
-						//std::cout << "write to client [" << static_cast<int>(*iter) << "] @ port " 
-							//<< " write to client size [" << size << "]\n\t" 
-							//<< get_client_udp_endpoint()->port() << " ip " << get_client_udp_endpoint()->address() << " success\n";
+						std::cout << "write to client [" << static_cast<int>(*iter) << "] @ port " 
+							<< " write to client size [" << size << "]\n\t" 
+							<< get_client_udp_endpoint()->port() << " ip " << get_client_udp_endpoint()->address() << " success\n";
 					}
 				}
 			);
