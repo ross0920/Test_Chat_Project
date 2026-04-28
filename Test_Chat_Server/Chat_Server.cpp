@@ -53,6 +53,8 @@ constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
 
 constexpr uint16_t udp_port = 5000;
+const int buffer_size = 38400; //19200;
+
 
 struct pair_hash {
 	size_t operator() (const std::pair<uint8_t, uint8_t>& p) const {
@@ -307,7 +309,7 @@ public:
 		if (participant_map.find(recv_vc_msg_->sender_id) == participant_map.end()) { 
 			std::cout << "sender id not found\n";
 			return false; }
-		participant_map[recv_vc_msg_->sender_id]->write_vc_msg_to_rb(recv_vc_msg_);
+		participant_map.at(recv_vc_msg_->sender_id)->write_vc_msg_to_rb(recv_vc_msg_);
 
 		return true;
 	}
@@ -577,12 +579,13 @@ public:
 
 
 	}
-	void send_server_udp_port(uint8_t& client_id) {
+	void send_server_udp_port(uint8_t& client_id, uint8_t& partner_id) {
 		chat_message msg;
 		msg.set_message_type(message_type::send_udp_port);
 		std::memcpy(msg.body(), &client_id, 1);
-		std::memcpy(msg.body() + 1, &udp_port, sizeof(udp_port));
-		msg.body_length(1 + sizeof(udp_port));
+		std::memcpy(msg.body() + 1, &partner_id, 1);
+		std::memcpy(msg.body() + 2, &udp_port, sizeof(udp_port));
+		msg.body_length(2 + sizeof(udp_port));
 		msg.encode_header();
 		std::cout << "send_server_udp_port() - \n\tclient_id = "
 			<< static_cast<int>(client_id)
@@ -673,6 +676,10 @@ public:
 			<< "\tsender_enable_vc[" << static_cast<int>(sender_enable_vc) << "]\n";
 		if (iter_a == participant_map.end()) {
 			std::cout << "\tinvalid sender\n";
+			return;
+		}
+		if (iter_b == participant_map.end()) {
+			std::cout << "\tinvalid receiver\n";
 			return;
 		}
 		uint8_t turn_on_client_vc = 0;
@@ -1052,7 +1059,7 @@ public:
 		//bpf = ma_get_bytes_per_frame(deviceCapture.capture.format, deviceCapture.capture.channels);
 		//rb  size in bytes = 19200
 		//just set to 19200 for now. eventually will need to calculate size
-		ma_result result = ma_rb_init(19200, NULL, NULL, &vc_rb);
+		ma_result result = ma_rb_init(buffer_size, NULL, NULL, &vc_rb);
 		if (result != MA_SUCCESS) {
 			std::cout << "Failed to initialize capture ring buffer\n";
 			return false;

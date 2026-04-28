@@ -206,6 +206,56 @@ private:
 	float noise_floor;
 	std::chrono::steady_clock::time_point last_update;
 };
+class rbs {
+public:
+	ma_rb capture_rb;
+	ma_rb playback_rb;
+
+	rbs(ma_device& capture_device, ma_device& playback_device) {
+		init_capture_rb(capture_device);
+		init_playback_rb(playback_device);
+	}
+
+
+	bool init_capture_rb(ma_device& capture_device) {
+		ma_uint32 bpf;
+		ma_uint32 subBufferSizeInFrames;
+		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
+		bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
+
+		//std::cout << "capture rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
+		ma_result result;
+		result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &capture_rb);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize capture ring buffer\n";
+			return false;
+		}
+		return true;
+	}
+	bool init_playback_rb(ma_device& playback_device) {
+		ma_uint32 bpf;
+		ma_uint32 subBufferSizeInFrames;
+		subBufferSizeInFrames = playback_device.playback.internalPeriodSizeInFrames * 5;
+		bpf = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
+
+		//std::cout << "playback rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
+		ma_result result;
+		result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &playback_rb);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize playback ring buffer\n";
+			return -1;
+		}
+		return true;
+	}
+	void uninit_capture_rb() {
+		std::cout << "uninit capture rb\n";
+		ma_rb_uninit(&capture_rb);
+	}
+	void uninit_playback_rb() {
+		std::cout << "uninit playback rb\n";
+		ma_rb_uninit(&playback_rb);
+	}
+};
 struct Audio_Context {
 	Audio_Context(size_t frame_size, float sample_rate, chat_client* c_) : speaking{ false },
 		current_gain{ 1.0f }, gain{ 20.0f }, noise_profile{ frame_size },
@@ -238,7 +288,8 @@ struct Audio_Context {
 	float rms_smoothed;
 	OpusEncoder* encoder;
 	OpusDecoder* decoder;
-	ma_rb ring_buffer;
+	//ma_rb ring_buffer;
+	std::unordered_map<uint8_t, rbs> vc_streams;
 	float input_float[frame_size]{};
 	uint8_t packet[4096]{};
 	chat_client* c;
@@ -294,6 +345,10 @@ struct client_vc_room {
 	std::unordered_set<uint8_t>ids;
 };
 
+class vc_partner {
+
+};
+
 class chat_client : public std::enable_shared_from_this<chat_client>
 {
 public:
@@ -322,11 +377,30 @@ public:
 	boost::asio::ip::udp::endpoint server_endpoint;
 	Audio_Context playback_ctx;
 	Audio_Context capture_ctx;
+	Audio_Context audio_ctx;
 	std::string session_token;//16 bytes/chars
 	bool capture_init = false;
 	bool playback_init = false;
 	bool running_capture_{ false };
 	bool running_playback_{ false };
+
+	void reinit_vc_streams() {
+		auto iter = audio_ctx.vc_streams.begin();
+		for (; iter != audio_ctx.vc_streams.end(); ++iter) {
+			iter->second.uninit_capture_rb();
+			iter->second.uninit_playback_rb();
+			iter->second.init_capture_rb(capture_device);
+			iter->second.init_playback_rb(playback_device);
+		}
+	}
+
+	void uninit_vc_streams() {
+		auto iter = audio_ctx.vc_streams.begin();
+		for (; iter != audio_ctx.vc_streams.end(); ++iter) {
+			iter->second.uninit_capture_rb();
+			iter->second.uninit_playback_rb();
+		}
+	}
 
 	void start_capture_device() {
 		running_capture_ = true;
@@ -385,7 +459,7 @@ public:
 		init_playback_device_test(playback_device, ma_playback_context, playback_ctx);
 		playback_init = true;
 	}
-	bool init_capture_rb() {
+	/*bool init_capture_rb() {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
 		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
@@ -399,8 +473,8 @@ public:
 			return false;
 		}
 		return true;
-	}
-	bool init_playback_rb() {
+	}*/
+	/*bool init_playback_rb() {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
 		subBufferSizeInFrames = playback_device.playback.internalPeriodSizeInFrames * 5;
@@ -414,15 +488,15 @@ public:
 			return -1;
 		}
 		return true;
-	}
-	void uninit_capture_rb() {
+	}*/
+	/*void uninit_capture_rb() {
 		std::cout << "uninit capture rb\n";
 		ma_rb_uninit(&capture_ctx.ring_buffer);
-	}
-	void uninit_playback_rb() {
+	}*/
+	/*void uninit_playback_rb() {
 		std::cout << "uninit playback rb\n";
 		ma_rb_uninit(&playback_ctx.ring_buffer);
-	}
+	}*/
 	void refresh_devices() {
 		refresh_playback_devices();
 		refresh_capture_devices();
@@ -537,11 +611,20 @@ private:
 		size_t requested = read_vc_msg_->body_length();
 		size_t total_written = 0;
 		uint8_t* data = (uint8_t*)read_vc_msg_->body();
+		uint8_t sender_id = 0;
+		std::memcpy(&sender_id, read_vc_msg_->body() + 18, 1);
 		//std::wcout << "udp ssl read size = " << requested << "\n";
+		try {
+			audio_ctx.vc_streams.at(sender_id);
+		}
+		catch (const std::out_of_range& e) {
+			std::cerr << "sender_id[" << static_cast<int>(sender_id) << "] not found\n";
+		}
 		while (requested > 0) {
 			size_t write_size = requested;
 			void* pOut;
-			result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
+			//result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
+			result = ma_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &write_size, &pOut);
 			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
 				//std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
@@ -551,7 +634,7 @@ private:
 			}
 			//std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
-			ma_rb_commit_write(&playback_ctx.ring_buffer, write_size);
+			ma_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, write_size);
 			requested -= write_size;
 			total_written += write_size;
 		}
@@ -682,11 +765,13 @@ private:
 			udp_port_client = client_ep.port();
 		}*/
 		uint8_t client_id = 0;
+		uint8_t partner_id = 0;
 		udp_port_server = 0;
 		std::memcpy(&client_id, m.body(), 1);
 			std::cout << "client_id[" << static_cast<int>(client_id) << "]"
 				<< "\nme.id[" << static_cast<int>(me.id) << "]\n";
-		std::memcpy(&udp_port_server, m.body() + 1, 2);
+		std::memcpy(&partner_id, m.body() + 1, 1);
+		std::memcpy(&udp_port_server, m.body() + 2, 2);
 		
 		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
 		server_endpoint = boost::asio::ip::udp::endpoint(boost::asio::ip::make_address_v4(server_ip), udp_port_server);
@@ -1284,13 +1369,16 @@ private:
 	ma_context ma_capture_context;
 	ma_context ma_playback_context;
 	std::array<uint8_t, 1500>recv_buffer_;
+
 	chat_client(boost::asio::io_context& io_context,
 		boost::asio::ssl::context& ssl_context,
 		const tcp::resolver::results_type& endpoints, GLFWwindow* window)
 		: io_context_(io_context), ssl_context_(ssl_context), socket_(std::make_shared<tcp::socket>(io_context)),
 		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ udp_port_number))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
-		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, me()
+		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, 
+		audio_ctx{frame_size, sample_rate, this},
+		me()
 	{	
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket&>>(*socket_, ssl_context_);
 		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
@@ -1299,8 +1387,9 @@ private:
 		me.id = 0;
 		init_capture();
 		init_playback();
-		init_capture_rb();
-		init_playback_rb();
+		audio_ctx.vc_streams.insert(std::make_pair(0, rbs(capture_device, playback_device)));
+		//init_capture_rb();
+		//init_playback_rb();
 		//do_connect(endpoints);
 		do_connect_ssl(endpoints);
 		session_token = "";
@@ -1354,8 +1443,9 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 						selected_capture = current_capture;
 						c->uninit_capture();
 						c->init_capture();
-						c->uninit_capture_rb();
-						c->init_capture_rb();
+						c->reinit_vc_streams();
+						//c->uninit_capture_rb();
+						//c->init_capture_rb();
 						if (c->running_capture_) {
 							c->start_capture_device();
 						}
@@ -1385,8 +1475,9 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 						selected_playback = current_playback;
 						c->uninit_playback();
 						c->init_playback();
-						c->uninit_playback_rb();
-						c->init_playback_rb();
+						c->reinit_vc_streams();
+						//c->uninit_playback_rb();
+						//c->init_playback_rb();
 						if (c->running_playback_) {
 							c->start_playback_device();
 						}
@@ -2020,6 +2111,7 @@ void duplex_data_callback(ma_device* device, void* output, const void* input, ma
 
 	//memcpy(out, decoded_buffer, decoded_frames * sizeof(float));
 }
+//TODO add stream mixing
 void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	ma_result result;
@@ -3040,8 +3132,9 @@ int main(int argc, char* argv[])
 		if (c->playback_init) {
 			c->uninit_playback();
 		}
-		c->uninit_capture_rb();
-		c->uninit_playback_rb();
+		//c->uninit_capture_rb();
+		//c->uninit_playback_rb();
+		c->uninit_vc_streams();
 		work_guard.reset();
 		io_context.stop();
 		t.join();
