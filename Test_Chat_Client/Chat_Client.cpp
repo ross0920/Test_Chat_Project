@@ -211,7 +211,9 @@ public:
 	ma_rb capture_rb;
 	ma_rb playback_rb;
 
-	rbs(ma_device& capture_device, ma_device& playback_device) {
+	size_t size;
+
+	rbs(ma_device& capture_device, ma_device& playback_device) : size{} {
 		init_capture_rb(capture_device);
 		init_playback_rb(playback_device);
 	}
@@ -238,7 +240,7 @@ public:
 		subBufferSizeInFrames = playback_device.playback.internalPeriodSizeInFrames * 5;
 		bpf = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
 
-		//std::cout << "playback rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
+		std::cout << "playback rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
 		ma_result result;
 		result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &playback_rb);
 		if (result != MA_SUCCESS) {
@@ -288,7 +290,7 @@ struct Audio_Context {
 	float rms_smoothed;
 	OpusEncoder* encoder;
 	OpusDecoder* decoder;
-	//ma_rb ring_buffer;
+	ma_rb ring_buffer;
 	std::unordered_map<uint8_t, rbs> vc_streams;
 	float input_float[frame_size]{};
 	uint8_t packet[4096]{};
@@ -456,10 +458,11 @@ public:
 		capture_init = true;
 	}
 	void init_playback() {
-		init_playback_device_test(playback_device, ma_playback_context, playback_ctx);
+		//init_playback_device_test(playback_device, ma_playback_context, playback_ctx);
+		init_playback_device_test(playback_device, ma_playback_context, audio_ctx);
 		playback_init = true;
 	}
-	/*bool init_capture_rb() {
+	bool init_capture_rb() {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
 		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
@@ -473,7 +476,7 @@ public:
 			return false;
 		}
 		return true;
-	}*/
+	}
 	/*bool init_playback_rb() {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
@@ -611,8 +614,8 @@ private:
 		size_t requested = read_vc_msg_->body_length();
 		size_t total_written = 0;
 		uint8_t* data = (uint8_t*)read_vc_msg_->body();
-		uint8_t sender_id = 0;
-		std::memcpy(&sender_id, read_vc_msg_->body() + 18, 1);
+		uint8_t sender_id = read_vc_msg_->sender_id;
+		//std::memcpy(&sender_id, read_vc_msg_->body() + 18, 1);
 		//std::wcout << "udp ssl read size = " << requested << "\n";
 		try {
 			audio_ctx.vc_streams.at(sender_id);
@@ -620,6 +623,7 @@ private:
 		catch (const std::out_of_range& e) {
 			std::cerr << "sender_id[" << static_cast<int>(sender_id) << "] not found\n";
 		}
+		std::cout << "requested = " << requested << "\n";
 		while (requested > 0) {
 			size_t write_size = requested;
 			void* pOut;
@@ -627,12 +631,12 @@ private:
 			result = ma_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &write_size, &pOut);
 			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
-				//std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
-					//" result = " << result << 
-					//"\n\t" << "rb_playback available = " << ma_rb_available_write(&playback_ctx.ring_buffer) << "\n";
+				std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
+					" result = " << result << 
+					"\n\t" << "rb_playback available = " << ma_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
 				break;
 			}
-			//std::cout << "write to rb_playback " << write_size << "\n";
+			std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, write_size);
 			requested -= write_size;
@@ -747,6 +751,11 @@ private:
 	void read_id(chat_message& m) {
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
 	}
+	void set_up_rb() {
+		audio_ctx.vc_streams.insert(std::make_pair(me.id, rbs(capture_device, playback_device)));
+		std::cout << "vc_stream count = " << audio_ctx.vc_streams.size() << "\n";
+		init_capture_rb();
+	}
 	void store_server_port(chat_message& m) {
 		/*uint8_t sender_id = 0;
 		vc_partner_ids.clear(); //only will get 2 vc participants currently
@@ -771,6 +780,7 @@ private:
 			std::cout << "client_id[" << static_cast<int>(client_id) << "]"
 				<< "\nme.id[" << static_cast<int>(me.id) << "]\n";
 		std::memcpy(&partner_id, m.body() + 1, 1);
+		std::cout << "partner_id[" << static_cast<int>(partner_id) << "]";
 		std::memcpy(&udp_port_server, m.body() + 2, 2);
 		
 		std::cout << "udp_port_server[" << static_cast<int>(udp_port_server) << "]\n";
@@ -1036,6 +1046,7 @@ private:
 				break;
 			case message_type::send_id:
 				read_id(m);
+				set_up_rb();
 				break;
 			case message_type::recieve_vc_request: 
 				receive_vc_request(m);
@@ -1387,7 +1398,8 @@ private:
 		me.id = 0;
 		init_capture();
 		init_playback();
-		audio_ctx.vc_streams.insert(std::make_pair(0, rbs(capture_device, playback_device)));
+		//audio_ctx.vc_streams.insert(std::make_pair(0, rbs(capture_device, playback_device)));
+		//std::cout << "vc_stream count = " << audio_ctx.vc_streams.size() << "\n";
 		//init_capture_rb();
 		//init_playback_rb();
 		//do_connect(endpoints);
@@ -2118,22 +2130,86 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
 	//std::cout << "total_bytes playback = " << total_bytes << "\n";
 	size_t size = total_bytes;
-	void* pOut;
-	result = ma_rb_acquire_read(&ctx->ring_buffer, &size, &pOut);
+	size_t current_size = total_bytes;
+	size_t total_size = 0;
+	auto iter = ctx->vc_streams.begin();
+	int i = 0;
+	//std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
+	//std::cout << "playback callback_test ??\n";
+	for (; iter != ctx->vc_streams.end(); ++iter) {
+		//std::cout << "reading vc stream # " << i << "\n";
+		void* pOut;
+		size_t size = total_bytes;
+		result = ma_rb_acquire_read(&iter->second.playback_rb, &size, &pOut);
+		iter->second.size = size;
+		if (result != MA_SUCCESS || size == 0) {
+			//std::cout << "playback rb available read space = " << ma_rb_available_read(&iter->second.playback_rb) << "\n";
+			//std::cout << "playback rb available write space = " << ma_rb_available_write(&iter->second.playback_rb) << "\n";
+			//std::cerr << "playback rb read fail: result = " << result << " size = " << iter->second.size << "\n";
+			continue;
+		}
+		std::memcpy((uint8_t*)pFramesOut + total_size, pOut, size);
+		total_size += size;
+		std::cout << "size = " << size << " total_size = " << total_size << "\n";
+		++i;
+	}
+	iter = ctx->vc_streams.begin();
+	for (; iter != ctx->vc_streams.end(); ++iter) {
+		ma_rb_commit_read(&iter->second.playback_rb, iter->second.size);
+	}
+
+	if (total_size < total_bytes) {
+		std::memset((uint8_t*)pFramesOut + total_size, 0, total_bytes - total_size);
+	}
+}
+void playback_callback_test_old(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
+	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
+	ma_result result;
+	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
+	//std::cout << "total_bytes playback = " << total_bytes << "\n";
+	size_t size = total_bytes;
+	size_t current_size = total_bytes;
+	size_t total_size = 0;
+	auto iter = ctx->vc_streams.begin();
+	int i = 0;
+	for (; iter != ctx->vc_streams.end(); ++iter) {
+		void* pOut;
+		size_t size = total_bytes;
+		result = ma_rb_acquire_read(&iter->second.playback_rb, &size, &pOut);
+		iter->second.size = size;
+		if (result != MA_SUCCESS || size == 0) {
+			//std::cout << "playback rb available read space = " << ma_rb_available_read(&ctx->ring_buffer) << "\n";
+			//std::cout << "playback rb available write space = " << ma_rb_available_write(&ctx->ring_buffer) << "\n";
+			//std::cerr << "playback rb read fail: result = " << result << " size = " << size << "\n";
+			continue;
+		}
+		total_size += size;
+		std::memcpy((uint8_t*)pFramesOut + i * size, pOut, size);
+	}
+	/*result = ma_rb_acquire_read(&ctx->ring_buffer, &size, &pOut);
 	if (result != MA_SUCCESS || size == 0) {
 		//std::cout << "playback rb available read space = " << ma_rb_available_read(&ctx->ring_buffer) << "\n";
 		//std::cout << "playback rb available write space = " << ma_rb_available_write(&ctx->ring_buffer) << "\n";
 		//std::cerr << "playback rb read fail: result = " << result << " size = " << size << "\n";
 		return;
+	}*/
+	//std::memcpy(pFramesOut, pOut, size);
+	//ma_rb_commit_read(&ctx->ring_buffer, size);
+	iter = ctx->vc_streams.begin();
+	for (; iter != ctx->vc_streams.end(); ++iter) {
+		ma_rb_commit_read(&iter->second.playback_rb, iter->second.size);
 	}
-	std::memcpy(pFramesOut, pOut, size);
-	ma_rb_commit_read(&ctx->ring_buffer, size);
+
 	//std::cout << "read rb_playback " << size << "\n";
-	if (size < total_bytes) {
+	/*if (size < total_bytes) {
 		//	std::cout << "playback size < total_bytes : " << size << " < " << total_bytes << "\n";
 		std::memset((uint8_t*)pFramesOut + size, 0, total_bytes - size);
+	}*/
+	if (total_size < total_bytes) {
+		std::memset((uint8_t*)pFramesOut + total_size, 0, total_bytes - total_size);
 	}
 }
+
 void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	ma_result result;

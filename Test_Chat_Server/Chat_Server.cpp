@@ -652,7 +652,7 @@ public:
 		if (turn_on_client_vc) {
 			std::cout << "\tturn on client vc\n";
 			participant_map.at(sender_id)->start_read_vc_rb();
-			send_server_udp_port(sender_id);
+			send_server_udp_port(sender_id, receiver_id);
 		}
 		if (turn_off_client_vc) {
 			std::cout << "\tturn off client vc\n";
@@ -731,13 +731,13 @@ public:
 				std::cout << "turn on client_a [" << static_cast<int>(client_a_id) << "]\n";
 				participant_map.at(client_a_id)->start_read_vc_rb();
 				participant_map.at(client_a_id)->set_vc_enabled(1);
-				send_server_udp_port(client_a_id);
+				send_server_udp_port(client_a_id, client_b_id);
 			}
 			if (participant_map.at(client_b_id)->get_vc_enabled() == 0) {
 				std::cout << "turn on client_b [" << static_cast<int>(client_b_id) << "]\n";
 				participant_map.at(client_b_id)->start_read_vc_rb();
 				participant_map.at(client_b_id)->set_vc_enabled(1);
-				send_server_udp_port(client_b_id);
+				send_server_udp_port(client_b_id, client_a_id);
 			}
 		}
 		else if (turn_on_client_vc == 0) {
