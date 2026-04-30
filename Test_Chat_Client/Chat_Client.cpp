@@ -756,6 +756,11 @@ private:
 		std::cout << "vc_stream count = " << audio_ctx.vc_streams.size() << "\n";
 		init_capture_rb();
 	}
+	void add_stream(chat_message& m) {
+		uint8_t partner_id = 0;
+		std::memcpy(&partner_id, m.body() + 1, 1);
+		audio_ctx.vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device)));
+	}
 	void store_server_port(chat_message& m) {
 		/*uint8_t sender_id = 0;
 		vc_partner_ids.clear(); //only will get 2 vc participants currently
@@ -790,6 +795,7 @@ private:
 			auto client_ep = udp_socket->local_endpoint();
 			udp_port_client = client_ep.port();
 		}
+
 	}
 	void send_udp_port() {
 		chat_message msg;
@@ -1089,6 +1095,7 @@ private:
 				break;
 			}
 			case message_type::send_udp_port:{
+				add_stream(m);
 				store_server_port(m);
 				send_udp_port();
 				break;
