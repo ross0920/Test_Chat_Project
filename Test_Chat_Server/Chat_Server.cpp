@@ -740,6 +740,7 @@ public:
 		turn_on_client_vc = (vc_hashmap.at(p).first & vc_hashmap.at(p).second);
 
 		if (turn_on_client_vc == 1) {
+			std::cout << "turn on client vc == 1\n";
 			participant_map.at(client_a_id)->get_vc_partner_ids()->insert(client_b_id);
 			participant_map.at(client_b_id)->get_vc_partner_ids()->insert(client_a_id);
 			if (participant_map.at(client_a_id)->get_vc_enabled() == 0) {
@@ -749,6 +750,7 @@ public:
 				send_server_udp_port(client_a_id, client_b_id);
 			}
 			else {
+				std::cout << "send_partner_id(client_a_id, client_b_id);\n";
 				send_partner_id(client_a_id, client_b_id);
 			}
 			if (participant_map.at(client_b_id)->get_vc_enabled() == 0) {
@@ -758,6 +760,7 @@ public:
 				send_server_udp_port(client_b_id, client_a_id);
 			}
 			else {
+				std::cout << "send_partner_id(client_b_id, client_a_id);\n";
 				send_partner_id(client_b_id, client_a_id);
 			}
 		}
