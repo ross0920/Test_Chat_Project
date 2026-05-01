@@ -615,7 +615,7 @@ private:
 		size_t total_written = 0;
 		uint8_t* data = (uint8_t*)read_vc_msg_->body();
 		uint8_t sender_id = read_vc_msg_->sender_id;
-		//std::memcpy(&sender_id, read_vc_msg_->body() + 18, 1);
+		std::memcpy(&sender_id, read_vc_msg_->body() + 18, 1);
 		//std::wcout << "udp ssl read size = " << requested << "\n";
 		try {
 			audio_ctx.vc_streams.at(sender_id);
@@ -623,20 +623,20 @@ private:
 		catch (const std::out_of_range& e) {
 			std::cerr << "sender_id[" << static_cast<int>(sender_id) << "] not found\n";
 		}
-		//std::cout << "requested = " << requested << "\n";
+		std::cout << "requested = " << requested << "\n";
 		while (requested > 0) {
 			size_t write_size = requested;
 			void* pOut;
 			//result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
 			result = ma_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &write_size, &pOut);
-			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
+			std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
-				//std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
-					//" result = " << result << 
-					//"\n\t" << "rb_playback available = " << ma_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
+				std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
+					" result = " << result << 
+					"\n\t" << "rb_playback available = " << ma_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
 				break;
 			}
-			//std::cout << "write to rb_playback " << write_size << "\n";
+			std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, write_size);
 			requested -= write_size;

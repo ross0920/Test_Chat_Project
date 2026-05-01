@@ -753,15 +753,17 @@ public:
 				std::cout << "send_partner_id(client_a_id, client_b_id);\n";
 				send_partner_id(client_a_id, client_b_id);
 			}
-			if (participant_map.at(client_b_id)->get_vc_enabled() == 0) {
-				std::cout << "turn on client_b [" << static_cast<int>(client_b_id) << "]\n";
-				participant_map.at(client_b_id)->start_read_vc_rb();
-				participant_map.at(client_b_id)->set_vc_enabled(1);
-				send_server_udp_port(client_b_id, client_a_id);
-			}
-			else {
-				std::cout << "send_partner_id(client_b_id, client_a_id);\n";
-				send_partner_id(client_b_id, client_a_id);
+			if (client_a_id != client_b_id) {
+				if (participant_map.at(client_b_id)->get_vc_enabled() == 0) {
+					std::cout << "turn on client_b [" << static_cast<int>(client_b_id) << "]\n";
+					participant_map.at(client_b_id)->start_read_vc_rb();
+					participant_map.at(client_b_id)->set_vc_enabled(1);
+					send_server_udp_port(client_b_id, client_a_id);
+				}
+				else {
+					std::cout << "send_partner_id(client_b_id, client_a_id);\n";
+					send_partner_id(client_b_id, client_a_id);
+				}
 			}
 		}
 		else if (turn_on_client_vc == 0) {
