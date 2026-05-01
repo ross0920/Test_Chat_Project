@@ -623,7 +623,7 @@ private:
 		catch (const std::out_of_range& e) {
 			std::cerr << "sender_id[" << static_cast<int>(sender_id) << "] not found\n";
 		}
-		std::cout << "requested = " << requested << "\n";
+		//std::cout << "requested = " << requested << "\n";
 		while (requested > 0) {
 			size_t write_size = requested;
 			void* pOut;
@@ -631,12 +631,12 @@ private:
 			result = ma_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &write_size, &pOut);
 			//std::cout << "acquire playback_ctx rb write size " << write_size << "\n";
 			if (result != MA_SUCCESS || write_size == 0) {
-				std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
-					" result = " << result << 
-					"\n\t" << "rb_playback available = " << ma_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
+				//std::cerr << "fail playback write acquire write_size = " << write_size << " requested = " << requested <<
+					//" result = " << result << 
+					//"\n\t" << "rb_playback available = " << ma_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
 				break;
 			}
-			std::cout << "write to rb_playback " << write_size << "\n";
+			//std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, write_size);
 			requested -= write_size;
@@ -760,6 +760,7 @@ private:
 		uint8_t partner_id = 0;
 		std::memcpy(&partner_id, m.body() + 1, 1);
 		audio_ctx.vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device)));
+		std::cout << "add_stream for partner_id[" << static_cast<int>(partner_id) << "\n";
 	}
 	void store_server_port(chat_message& m) {
 		/*uint8_t sender_id = 0;
@@ -2157,7 +2158,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 		}
 		std::memcpy((uint8_t*)pFramesOut + total_size, pOut, size);
 		total_size += size;
-		std::cout << "size = " << size << " total_size = " << total_size << "\n";
+		//std::cout << "size = " << size << " total_size = " << total_size << "\n";
 		++i;
 	}
 	iter = ctx->vc_streams.begin();
