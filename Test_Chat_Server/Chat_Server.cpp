@@ -599,6 +599,21 @@ public:
 			return;
 		}
 	}
+	void send_partner_id(uint8_t& client_id, uint8_t& partner_id) {
+		chat_message msg;
+		msg.set_message_type(message_type::vc_partner_update);
+		std::memcpy(msg.body(), &client_id, 1);
+		std::memcpy(msg.body() + 1, &partner_id, 1);
+		msg.body_length(2);
+		msg.encode_header();
+		if (participant_map.find(client_id) != participant_map.end()) {
+			participant_map.at(client_id)->deliver(msg);
+		}
+		else {
+			std::cout << "client_id not found\n";
+			return;
+		}
+	}
 	void stop_client_vc(uint8_t& sender_id) {
 		chat_message msg;
 		msg.set_message_type(message_type::end_vc);
@@ -733,11 +748,17 @@ public:
 				participant_map.at(client_a_id)->set_vc_enabled(1);
 				send_server_udp_port(client_a_id, client_b_id);
 			}
+			else {
+				send_partner_id(client_a_id, client_b_id);
+			}
 			if (participant_map.at(client_b_id)->get_vc_enabled() == 0) {
 				std::cout << "turn on client_b [" << static_cast<int>(client_b_id) << "]\n";
 				participant_map.at(client_b_id)->start_read_vc_rb();
 				participant_map.at(client_b_id)->set_vc_enabled(1);
 				send_server_udp_port(client_b_id, client_a_id);
+			}
+			else {
+				send_partner_id(client_b_id, client_a_id);
 			}
 		}
 		else if (turn_on_client_vc == 0) {

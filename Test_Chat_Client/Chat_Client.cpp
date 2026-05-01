@@ -760,7 +760,7 @@ private:
 		uint8_t partner_id = 0;
 		std::memcpy(&partner_id, m.body() + 1, 1);
 		audio_ctx.vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device)));
-		std::cout << "add_stream for partner_id[" << static_cast<int>(partner_id) << "\n";
+		std::cout << "add_stream for partner_id[" << static_cast<int>(partner_id) << "]\n";
 	}
 	void store_server_port(chat_message& m) {
 		/*uint8_t sender_id = 0;
@@ -1099,6 +1099,10 @@ private:
 				add_stream(m);
 				store_server_port(m);
 				send_udp_port();
+				break;
+			}
+			case message_type::vc_partner_update: {
+				add_stream(m);
 				break;
 			}
 			default:
