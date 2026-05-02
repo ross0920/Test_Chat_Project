@@ -2142,7 +2142,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	ma_result result;
 	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
 	std::cout << "frameCount = " << frameCount << "\n";
-	//std::cout << "total_bytes playback = " << total_bytes << "\n";
+	std::cout << "total_bytes playback = " << total_bytes << "\n";
 	size_t size = total_bytes;
 	size_t current_size = total_bytes;
 	size_t total_size = 0;
