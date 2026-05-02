@@ -2146,7 +2146,6 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	size_t current_size = total_bytes;
 	size_t total_size = 0;
 	auto iter = ctx->vc_streams.begin();
-	int i = 0;
 	std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
 	//std::cout << "playback callback_test ??\n";
 	for (; iter != ctx->vc_streams.end(); ++iter) {
@@ -2161,12 +2160,10 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 			std::cerr << "playback rb read fail: result = " << result << " size = " << iter->second.size << "\n";
 			continue;
 		}
-		ma_rb_commit_read(&iter->second.playback_rb, iter->second.size);
-
+		ma_rb_commit_read(&iter->second.playback_rb, size);
 		std::memcpy((uint8_t*)pFramesOut + total_size, pOut, size);
 		total_size += size;
 		std::cout << "size = " << size << " total_size = " << total_size << "\n";
-		++i;
 	}
 	/*iter = ctx->vc_streams.begin();
 	for (; iter != ctx->vc_streams.end(); ++iter) {
