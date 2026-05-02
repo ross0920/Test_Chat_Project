@@ -2150,7 +2150,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 	std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
 	//std::cout << "playback callback_test ??\n";
 	for (; iter != ctx->vc_streams.end(); ++iter) {
-		std::cout << "reading vc stream # " << i << "\n";
+		std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
 		void* pOut;
 		size_t size = total_bytes;
 		result = ma_rb_acquire_read(&iter->second.playback_rb, &size, &pOut);
