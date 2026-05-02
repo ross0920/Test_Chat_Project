@@ -753,7 +753,7 @@ private:
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
 	}
 	void set_up_rb() {
-		audio_ctx.vc_streams.insert(std::make_pair(me.id, rbs(capture_device, playback_device)));
+		//audio_ctx.vc_streams.insert(std::make_pair(me.id, rbs(capture_device, playback_device)));
 		std::cout << "vc_stream count = " << audio_ctx.vc_streams.size() << "\n";
 		init_capture_rb();
 	}
