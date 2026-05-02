@@ -616,7 +616,7 @@ private:
 		uint8_t* data = (uint8_t*)read_vc_msg_->body();
 		uint8_t sender_id = read_vc_msg_->sender_id;
 		//std::wcout << "udp ssl read size = " << requested << "\n";
-		std::cerr << "sender_id[" << static_cast<int>(sender_id) << "]\n";
+		std::cout << "sender_id[" << static_cast<int>(sender_id) << "]\n";
 
 		try {
 			audio_ctx.vc_streams.at(sender_id);
@@ -624,7 +624,7 @@ private:
 		catch (const std::out_of_range& e) {
 			std::cerr << "sender_id[" << static_cast<int>(sender_id) << "] not found\n";
 		}
-		std::cout << "requested = " << requested << "\n";
+		//std::cout << "requested = " << requested << "\n";
 		while (requested > 0) {
 			size_t write_size = requested;
 			void* pOut;
@@ -637,7 +637,7 @@ private:
 					"\n\t" << "rb_playback available = " << ma_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
 				break;
 			}
-			std::cout << "write to rb_playback " << write_size << "\n";
+			//std::cout << "write to rb_playback " << write_size << "\n";
 			std::memcpy(pOut, data + total_written, write_size);
 			ma_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, write_size);
 			requested -= write_size;
