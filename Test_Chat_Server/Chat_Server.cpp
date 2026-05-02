@@ -1127,12 +1127,12 @@ public:
 		//std::cout << "try_send_vc_msg()\n";
 		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 		uint8_t test = 3;
-		/*std::cout << "encoding:"
-			<< "\n\tsession_token[" << session_token << "]"
-			<< "\n\tsize[" << static_cast<int>(size) << "]"
-			<< "\n\tvc_room_id[" << static_cast<int>(vc_room_id) << "]"
-			<< "\n\tid[" << static_cast<int>(id) << "]"
-			<< "\n\ttest[" << static_cast<int>(test) << "]\n";*/
+		//std::cout << "encoding:"
+			///<< "\n\tsession_token[" << session_token << "]"
+			//<< "\n\tsize[" << static_cast<int>(size) << "]"
+			//<< "\n\tvc_room_id[" << static_cast<int>(vc_room_id) << "]"
+			//<< "\n\tid[" << static_cast<int>(id) << "]"
+			//<< "\n\ttest[" << static_cast<int>(test) << "]\n";
 		m->encode_header(session_token, size, vc_room_id, id);
 		std::memcpy(m->body(), in, size);
 		//std::cout << "m->sender_id[" << static_cast<int>(m->sender_id) << "]\n";
@@ -1159,10 +1159,10 @@ public:
 						//std::cout << "write to client [" << *iter << "] fail\n";
 					}
 					else {
-						/*std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
-							<< " to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
-							<< " write to client size [" << size << "]\n\t" 
-							<< ep->port() << " ip " << ep->address() << " success\n";*/
+						//std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
+						//	<< " to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
+							//<< " write to client size [" << size << "]\n\t" 
+							//<< ep->port() << " ip " << ep->address() << " success\n";
 					}	
 				}
 			);

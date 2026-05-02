@@ -615,7 +615,6 @@ private:
 		size_t total_written = 0;
 		uint8_t* data = (uint8_t*)read_vc_msg_->body();
 		uint8_t sender_id = read_vc_msg_->sender_id;
-		std::memcpy(&sender_id, read_vc_msg_->body() + 18, 1);
 		//std::wcout << "udp ssl read size = " << requested << "\n";
 		try {
 			audio_ctx.vc_streams.at(sender_id);
