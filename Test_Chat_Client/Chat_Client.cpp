@@ -3261,7 +3261,7 @@ int main(int argc, char* argv[])
 			}
 				call_imgui(draw_chat_window, window, c);
 		}
-		/*c->msgs.clear();
+		c->msgs.clear();
 		c->participant_names.clear();
 		c->participants.clear();
 		c->participant_map.clear();
@@ -3283,7 +3283,7 @@ int main(int argc, char* argv[])
 		c->uninit_vc_streams();
 		work_guard.reset();
 		io_context.stop();
-		t.join();*/
+		t.join();
 		
 	}
 	catch(std::exception& e){
