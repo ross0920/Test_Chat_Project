@@ -625,11 +625,11 @@ private:
 			//result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
 			//result = ma_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &write_size, &pOut);
 			result = ma_pcm_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &frames, &pOut);
-			std::cout << "acquire playback_ctx rb frames " << frames << "\n";
+			//std::cout << "acquire playback_ctx rb frames " << frames << "\n";
 			if (result != MA_SUCCESS || frames == 0) {
-				std::cerr << "fail playback write acquire frames = " << frames << " requested = " << requested <<
-					" result = " << result << 
-					"\n\t" << "rb_playback available = " << ma_pcm_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
+				//std::cerr << "fail playback write acquire frames = " << frames << " requested = " << requested <<
+					//" result = " << result << 
+					//"\n\t" << "rb_playback available = " << ma_pcm_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
 				break;
 			}
 			//std::cout << "write to rb_playback " << write_size << "\n";
@@ -2178,18 +2178,18 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 
 	ma_result result;
 	auto iter = ctx->vc_streams.begin();
-	std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
+	//std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
 	for (; iter != ctx->vc_streams.end(); ++iter) {
-		std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
+		//std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
 		rbs& stream = iter->second;
 		ma_uint32 frames_to_read = frameCount;
 		void* p_in = nullptr;
 		ma_result result = 
 			ma_pcm_rb_acquire_read(&iter->second.playback_rb, &frames_to_read, &p_in);
 		if (result != MA_SUCCESS || frames_to_read == 0) {
-			std::cout << "playback rb available read space = " << ma_pcm_rb_available_read(&iter->second.playback_rb) << "\n";
-			std::cout << "playback rb available write space = " << ma_pcm_rb_available_write(&iter->second.playback_rb) << "\n";
-			std::cout << "playback rb read fail: result = " << result << " frames_to_read = " << frames_to_read << "\n";
+			//std::cout << "playback rb available read space = " << ma_pcm_rb_available_read(&iter->second.playback_rb) << "\n";
+			//std::cout << "playback rb available write space = " << ma_pcm_rb_available_write(&iter->second.playback_rb) << "\n";
+			//std::cout << "playback rb read fail: result = " << result << " frames_to_read = " << frames_to_read << "\n";
 			continue;
 		}
 		float* in = (float*)p_in;
