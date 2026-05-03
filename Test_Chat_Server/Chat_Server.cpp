@@ -307,16 +307,10 @@ public:
 	}
 
 	bool route_udp(uint8_t vc_room_id_, std::shared_ptr<voice_chat_message> recv_vc_msg_) {
-		/*if (vc_rooms.find(vc_room_id_) != vc_rooms.end()) {
-			//std::cout << "routing message to vc_room_id_[" << static_cast<int>(vc_room_id_) << "]\n";
-			vc_rooms.at(vc_room_id_)->route_vc_msg_to_sender(recv_vc_msg_);
-			return true;
-		}*/
 		if (participant_map.find(recv_vc_msg_->sender_id) == participant_map.end()) { 
 			std::cout << "sender id not found\n";
 			return false; }
 		participant_map.at(recv_vc_msg_->sender_id)->write_vc_msg_to_rb(recv_vc_msg_);
-
 		return true;
 	}
 	bool validate_token(uint8_t sender_id_, std::string token_) {
@@ -585,8 +579,6 @@ public:
 			}
 			std::cout << "]\n";
 		}
-
-
 	}
 	void send_server_udp_port(uint8_t& client_id, uint8_t& partner_id) {
 		chat_message msg;
@@ -1015,7 +1007,9 @@ public:
 		vc_room_id(0),
 		vc_partner_ids{},
 		vc_requestor_ids{},
-		vc_enabled{0}
+		vc_enabled{0},
+		heartbeat_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
+		disconnect_timer{std::make_shared<boost::asio::steady_timer>(io_context)}
 	{
 	}
 	void update_vc_partner_id(uint8_t receiver_id, std::pair<uint8_t,uint8_t> p) {
@@ -1326,15 +1320,15 @@ private:
 		});
 	}
 	void do_read_header_ssl() {
-		std::cout << "do_read_header_ssl\n";
+		//std::cout << "do_read_header_ssl\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this, self](boost::system::error_code ec, std::size_t)
 			{
 				if (!ec && read_msg_.decode_header()) {
-					std::string header = std::string(read_msg_.data(), chat_message::header_length);
-					std::cout << "read_msg_header[" << header << "]\n";					
+					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					//std::cout << "read_msg_header[" << header << "]\n";					
 					do_read_body_ssl();
 
 				}
@@ -1364,7 +1358,7 @@ private:
 		});
 	}
 	void do_read_body_ssl() {
-		std::cout << "do_read_body_ssl()\n";
+		//std::cout << "do_read_body_ssl()\n";
 		auto self(shared_from_this());
 		boost::asio::async_read(ssl_socket_,
 			boost::asio::buffer(read_msg_.body(), read_msg_.body_length()),
@@ -1386,6 +1380,8 @@ private:
 							std::cout << "header encoded\n";
 							deliver(m);
 							authenticated = true;
+							start_heartbeat();
+							start_disconnect_timer();
 						}
 						else {
 							send_authentication_request();
@@ -1394,7 +1390,6 @@ private:
 						}
 						do_read_header_ssl();
 						return;
-
 					}
 					switch (read_msg_.msg_type) {
 						/*case(message_type::ready_notification): {
@@ -1430,8 +1425,8 @@ private:
 							room_->join(shared_from_this());
 							room_->update_client_participants();
 						}
+						break;
 					}
-														   break;
 					case(message_type::chat): {
 						std::string full_msg = name + ": ";
 						full_msg.append(read_msg_.body(), read_msg_.body_length());
@@ -1484,6 +1479,11 @@ private:
 					}
 					case(message_type::vc_status_response): {
 						room_->handle_vc_status_response(read_msg_);
+						break;
+					}
+					case(message_type::heartbeat): {
+						reset_disconnect(read_msg_);
+						break;
 					}
 					}
 					do_read_header_ssl();
@@ -1669,6 +1669,43 @@ private:
 			}
 		);
 	}
+	void heartbeat_ping(const boost::system::error_code& e,
+		std::shared_ptr<boost::asio::steady_timer> t) {
+		if (e == boost::asio::error::operation_aborted) { return; }
+		t->expires_after(boost::asio::chrono::seconds(20));
+	
+		chat_message m;
+		m.set_message_type(message_type::heartbeat);
+		std::memcpy(m.body(), &id, 1);
+		m.body_length(sizeof(id));
+		m.encode_header();
+		deliver(m);
+		t->async_wait([=](const boost::system::error_code& ec) { heartbeat_ping(ec, t); });
+	}
+	void start_heartbeat() {
+		auto self = shared_from_this();
+		auto timer = heartbeat_timer;
+		heartbeat_timer->async_wait([this, self, timer](const boost::system::error_code& ec) {
+			heartbeat_ping(ec, timer); 
+			});
+	}
+	void reset_disconnect(chat_message& m) {
+		disconnect_timer->expires_after(std::chrono::seconds(60));
+	}
+	void disconnect(const boost::system::error_code& e,
+		std::shared_ptr<boost::asio::steady_timer> t) {
+		if (e == boost::asio::error::operation_aborted) { return; }
+		std::cout << "disconnect trigger\n";
+		room_->leave(shared_from_this());
+	}
+	void start_disconnect_timer() {
+		disconnect_timer->expires_after(std::chrono::seconds(60));
+		auto self = shared_from_this();
+		auto timer = disconnect_timer;
+		disconnect_timer->async_wait([this, self, timer](const boost::system::error_code& ec) {
+			disconnect(ec, timer);
+		});
+	}
 	boost::asio::ssl::stream<tcp::socket> ssl_socket_;
 	tcp::socket socket_;
 	std::shared_ptr<chat_room> room_;
@@ -1685,6 +1722,8 @@ private:
 	ma_rb vc_rb;
 	boost::asio::io_context& io_context;
 	uint8_t vc_room_id;
+	std::shared_ptr<boost::asio::steady_timer> heartbeat_timer;
+	std::shared_ptr<boost::asio::steady_timer> disconnect_timer;
 };
 class chat_server {
 public:

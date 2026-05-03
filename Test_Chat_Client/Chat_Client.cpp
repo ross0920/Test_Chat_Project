@@ -1023,6 +1023,17 @@ private:
 			vc_partner_ids.erase(receiver_id);
 		}
 	}
+	void heartbeat_ping(chat_message& m) {
+		uint8_t sender_id = 0;
+		std::memcpy(&sender_id, m.body(), 1);
+		if (sender_id != me.id) { std::cout << "heartbeat id fail match\n"; return; }
+		chat_message msg;
+		msg.set_message_type(message_type::heartbeat);
+		std::memcpy(m.body(), &me.id, 1);
+		msg.body_length(sizeof(me.id));
+		msg.encode_header();
+		write_ssl(msg);
+	}
 	void process_msg_type(chat_message& m) {
 		switch (m.msg_type) {
 			case message_type::chat:
@@ -1122,6 +1133,11 @@ private:
 			}
 			case message_type::vc_partner_update: {
 				add_stream(m);
+				break;
+			}
+			case message_type::heartbeat: {
+				std::cout << "send heartbeat\n";
+				heartbeat_ping(m);
 				break;
 			}
 			default:
@@ -1358,7 +1374,7 @@ private:
 			[this](boost::system::error_code ec, std::size_t) {
 				std::string header = std::string(write_msgs_.front().data(), chat_message::header_length);
 				std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
-				std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+				//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
 				if (!ec) {
 					if (write_msgs_.front().msg_type == message_type::ready_notification) {
 						state = client_state::awaiting_authentication;
