@@ -331,27 +331,7 @@ enum client_state {
 	receiving_request = 7
 };
 
-enum participant_state {
-	requesting_vc = 1,
-	sending_vc_request = 2,
-	vc_request_rejected = 3,
-	in_vc = 4,
-	neutral = 5
-};
 
-struct participant_client_data {
-	participant_client_data(chat_participant p) : p{ p }, ps{ participant_state::neutral }, enable_vc{ false, false } {}
-	participant_client_data(participant_client_data& obj) {
-		p = obj.p;
-		ps = obj.ps;
-		enable_vc = obj.enable_vc;
-	}
-	chat_participant p;
-	participant_state ps;
-	std::pair<bool, bool> enable_vc;//my value for them //their value for me //if both are 1 then vc is enabled. this is 
-	//double checked on server.
-
-};
 
 struct client_vc_room {
 	client_vc_room() : ids{} {}
@@ -375,11 +355,11 @@ public:
 
 	client_state state = client_state::awaiting_connection;
 	std::vector<std::string>participant_names;
-	std::vector<chat_participant>participants;
-	std::unordered_set<uint8_t>vc_partner_ids;
+	std::vector<chat_participant>participants;//not even using this currently
+	std::unordered_set<uint8_t>vc_partner_ids;//pretty sure not using this either
 	std::unordered_map<uint8_t, chat_participant>participant_map;
 	std::unordered_map<uint8_t, participant_client_data>participant_client_map;
-	std::unordered_map<uint8_t, client_vc_room> vc_rooms;
+	std::unordered_map<uint8_t, client_vc_room> vc_rooms;//not using this
 	chat_participant me;
 	std::vector<std::string> msgs;
 	std::unordered_set<uint8_t> requests_;
@@ -711,6 +691,12 @@ private:
 		}
 	}
 	void add_participants(chat_message& m) {
+		//MARKER1
+		auto iter = participant_client_map.find(me.id);
+		std::pair<bool, bool> enable_vc{};
+		if (iter != participant_client_map.end()) {
+			enable_vc = iter->second.enable_vc;
+		}
 		participants.clear();
 		participant_map.clear();
 		participant_client_map.clear();
@@ -723,6 +709,8 @@ private:
 		char* end = m.body() + m.body_length();
 		//std::string mbody = std::string(m.body(), m.body_length());
 		//std::cout << "\tm.body[" << mbody << "]\n";
+		std::unordered_map<uint8_t, chat_participant> temp_participant_map{};
+		std::unordered_map<uint8_t, participant_client_data> temp_client_data_map{};
 		for (int i = 0; i < ps; i++) {
 			if (ptr >= end) { break; }
 			chat_participant p{};
@@ -737,6 +725,7 @@ private:
 			//	<< "\tid[" << static_cast<int>(p.id) << "]"
 			//	<< "\tname[" << p.name << "]\n";
 			participant_client_data pcd{ p };
+			if (p.id == me.id) { pcd.enable_vc = enable_vc; }
 			participants.push_back(p);
 			participant_map.emplace(p.id, p);
 			participant_client_map.emplace(p.id,pcd);
@@ -968,6 +957,7 @@ private:
 		//uninit_capture();
 		//uninit_capture_rb();
 	}*/
+	//not using this
 	void remove_sender_from_vc(chat_message& m) {
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
@@ -1006,6 +996,7 @@ private:
 			vc_partner_ids.erase(sender_id);
 		}
 	}
+	//not using this
 	void update_vc_partner_ids(chat_message& m) {
 		uint8_t enable_vc_option = 0;
 		std::memcpy(&enable_vc_option, m.body(), 1);
@@ -2178,7 +2169,6 @@ void duplex_data_callback(ma_device* device, void* output, const void* input, ma
 }
 //TODO add stream mixing
 void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
-	//MARKER1
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	const ma_uint32 channels = pDevice->playback.channels;
 	const ma_uint32 total_samples = frameCount * channels;

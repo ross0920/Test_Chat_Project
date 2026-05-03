@@ -9,6 +9,7 @@
 #include "boost/asio.hpp"
 #include "Typedefs.h"
 
+
 enum class voice_chat_state : uint8_t {
 	none = 0,
 	initiating = 1,
@@ -28,7 +29,7 @@ void hex_dump(const char* data, size_t length) {
 
 static constexpr std::size_t participant_max_size = 32;
 static constexpr std::size_t token_size = 16;
-
+class participant_client_data;
 class chat_participant {
 public:
 	std::string session_token; //16 bytes. don't serialize
@@ -61,7 +62,6 @@ public:
 	}
 	virtual void set_vc_enabled(uint8_t val) {
 	}
-
 	std::size_t serialized_size() {
 		size_t size = 0;
 		size += sizeof(id);
@@ -125,6 +125,27 @@ public:
 		}*/
 	}
 
+};
+enum participant_state {
+	requesting_vc = 1,
+	sending_vc_request = 2,
+	vc_request_rejected = 3,
+	in_vc = 4,
+	neutral = 5
+};
+
+class participant_client_data {
+public:
+	participant_client_data(chat_participant p) : p{ p }, ps{ participant_state::neutral }, enable_vc{ false, false } {}
+	participant_client_data(participant_client_data& obj) {
+		p = obj.p;
+		ps = obj.ps;
+		enable_vc = obj.enable_vc;
+	}
+	chat_participant p;
+	participant_state ps;
+	std::pair<bool, bool> enable_vc;//my value for them //their value for me //if both are 1 then vc is enabled. this is 
+	//double checked on server.
 };
 struct participant_container {
 	participant_container() : name{ "empty" }, vc_state{ 0 }
