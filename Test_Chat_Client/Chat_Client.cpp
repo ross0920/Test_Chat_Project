@@ -3292,12 +3292,12 @@ int main(int argc, char* argv[])
 
 	//ma_device_uninit(&device);
 
-	//ImGui_ImplOpenGL3_Shutdown();
-	//ImGui_ImplGlfw_Shutdown();
-	//ImGui::DestroyContext();
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
 
-	//glfwDestroyWindow(window);
-	//glfwTerminate();
+	glfwDestroyWindow(window);
+	glfwTerminate();
 
 	return 0;
 }
