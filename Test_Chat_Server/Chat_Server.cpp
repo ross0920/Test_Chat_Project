@@ -377,8 +377,11 @@ public:
 	}
 
 	void send_room_leave_notifications(chat_participant_ptr participant) {
+		std::cout << "send_room_leave_notifications()\n";
 		auto iter = participant_map.find(participant->id);
-		if (iter == participant_map.end()) { return; }
+		if (iter == participant_map.end()) {
+			std::cout << "invalid participant\n";
+			return; }
 		auto p = participant_map.begin();
 		for (; p != participant_map.end(); ++p) {
 			chat_message msg;
@@ -387,7 +390,9 @@ public:
 			std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 			msg.body_length(sizeof(sender_id));
 			msg.encode_header();
-			participant->deliver(msg);
+			std::cout << "delivering leave notice of " << static_cast<int>(sender_id) <<
+				" to " << p->second->name << "\n";
+			p->second->deliver(msg);
 		}
 	}
 
