@@ -283,11 +283,17 @@ public:
 		auto iter = vc_hashmap.begin();
 		for (; iter != vc_hashmap.end();) {
 			if (iter->first.first == id) {
-				participant_map.at(iter->first.second)->get_vc_partner_ids()->erase(id);
+				auto check_second = participant_map.find(iter->first.second);
+				if (check_second != participant_map.end()) {
+					participant_map.at(iter->first.second)->get_vc_partner_ids()->erase(id);
+				}
 				iter->second.first = 0;
 			}
 			else if (iter->first.second == id) {
-				participant_map.at(iter->first.first)->get_vc_partner_ids()->erase(id);
+				auto  check_first = participant_map.find(iter->first.first);
+				if (check_first != participant_map.end()) {
+					participant_map.at(iter->first.first)->get_vc_partner_ids()->erase(id);
+				}
 				iter->second.second = 0;
 			}
 			bool remove = iter->second.first == 0 && iter->second.second == 0;
@@ -412,13 +418,16 @@ public:
 		}
 	}
 	void leave(chat_participant_ptr participant) {
+		//MARKER1
 		//participant->stop_read_vc_rb();
 		//leave_vc_room(participant);//TODO get rid of this
 		//leave any vc rooms first
 		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " leave chat room\n";
 		//remove token
 		if (!participant->id) { std::cout << "participant id is 0. not leaving room\n"; return; }
+		std::cout << "clean_vc_hash\n";
 		clean_vc_hash(participant->id);
+		std::cout << "send_room_leave_notifications()\n";
 		send_room_leave_notifications(participant);
 		auto it = tokens.find(participant->id);
 		std::cout << "search for token @ participant id " << static_cast<int>(participant->id) << "\n";
@@ -1156,7 +1165,7 @@ public:
 			udp_socket_->async_send_to(buffer, *ep,
 				[this, self, size, iter, msg_copy, ep](boost::system::error_code ec, std::size_t bytes) {
 					if (ec) {
-						//std::cout << "write to client [" << *iter << "] fail\n";
+						std::cout << "write to client [" << *iter << "] fail: " << ec.message() << "\n";
 					}
 					else {
 						//std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
