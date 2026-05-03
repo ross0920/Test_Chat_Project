@@ -700,7 +700,6 @@ private:
 		}
 	}
 	void add_participants(chat_message& m) {
-		//MARKER1
 		auto iter = participant_client_map.find(me.id);
 		std::pair<bool, bool> enable_vc{};
 		if (iter != participant_client_map.end()) {
@@ -995,14 +994,21 @@ private:
 	}
 
 	void remove_sender_from_chat(chat_message& m) {
+		//MARKER1
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
-		if (participant_map.find(sender_id) == participant_map.end()) { return; }
-		else {
-			participant_client_map.erase(sender_id);
+		std::cout << "remove[" << static_cast<int>(sender_id) << "] from chat\n";
+		if (participant_map.find(sender_id) != participant_map.end())
+		{
+			std::cout << "erase [" << static_cast<int>(sender_id) << "] from participant_map\n";
+			participant_map.erase(sender_id);
 		}
 		if (vc_partner_ids.find(sender_id) != vc_partner_ids.end()) {
 			vc_partner_ids.erase(sender_id);
+		}
+		if (participant_client_map.find(sender_id) != participant_client_map.end()) {
+			participant_client_map.erase(sender_id);
+			std::cout << "erase [" << static_cast<int>(sender_id) << "] from participant_client_map\n";
 		}
 	}
 	//not using this
