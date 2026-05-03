@@ -1485,6 +1485,9 @@ private:
 						reset_disconnect(read_msg_);
 						break;
 					}
+					case(message_type::leave): {
+						room_->leave(shared_from_this());
+					}
 					}
 					do_read_header_ssl();
 				}

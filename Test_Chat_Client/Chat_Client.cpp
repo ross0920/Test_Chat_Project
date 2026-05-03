@@ -1025,6 +1025,14 @@ private:
 		msg.encode_header();
 		write_ssl(msg);
 	}
+	void leave() {
+		chat_message m;
+		m.set_message_type(message_type::leave);
+		std::memcpy(m.body(), &me.id, 1);
+		m.body_length(1);
+		m.encode_header();
+		write_ssl(m);
+	}
 	void process_msg_type(chat_message& m) {
 		switch (m.msg_type) {
 			case message_type::chat:
@@ -3267,6 +3275,7 @@ int main(int argc, char* argv[])
 			}
 				call_imgui(draw_chat_window, window, c);
 		}
+		c->leave
 		c->msgs.clear();
 		c->participant_names.clear();
 		c->participants.clear();

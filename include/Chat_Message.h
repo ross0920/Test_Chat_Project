@@ -37,7 +37,8 @@ enum class message_type : uint8_t {
 	vc_status_response = 28,
 	vc_partner_update = 29,
 	heartbeat = 30,
-	bad_message = 31
+	leave = 31,
+	bad_message = 32
 };
 
 class chat_message {
