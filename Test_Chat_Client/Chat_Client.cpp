@@ -1,5 +1,5 @@
 //test
-
+//C++17
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -14,6 +14,7 @@
 #include <thread>
 #include <atomic>
 #include <unordered_set>
+#include <filesystem>
 //#include <windows.h>
 //#include <wincrypt.h>
 //#include <cryptuiapi.h>
@@ -78,6 +79,7 @@ constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
 constexpr float sample_rate = 48000.0f;
 constexpr ma_uint32 frame_size = 960;
+const std::string client_version = "1.0";
 
 const size_t max_playback_size = 3840;
 const int buffer_size = 38400; //19200;
@@ -743,7 +745,7 @@ private:
 		chat_message auth;
 		auth.body_length(key.length());
 		auth.set_message_type(message_type::authentication_response);
-		std::memcpy(auth.body(), key.c_str(), auth.body_length());
+		std::memcpy(auth.body(), key.c_str(), key.length());
 		auth.encode_header();
 		std::string auth_string = std::string(auth.body(), auth.body_length());
 		//write(auth);
@@ -3208,6 +3210,13 @@ int main(int argc, char* argv[])
 	//mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
 	//screenWidth = mode->width;
 	//screenHeight = mode->height;
+	const std::string cert_leaf = "isrg_cert.pem";
+	std::filesystem::path cert_path = std::filesystem::current_path();
+	std::cout << "working directory: " << cert_path << "\n";
+	cert_path.append(cert_leaf);
+	std::string pem = cert_path.string();
+	std::cout << "pem = " << pem << "\n";
+
 	msg_history.reserve(100);
 	glfwSetErrorCallback(glfw_error_callback);
 	if (!glfwInit())
@@ -3252,7 +3261,7 @@ int main(int argc, char* argv[])
 		}*/
 		boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tls_client);//tlsv12_client
 		ssl_context.set_verify_mode(boost::asio::ssl::verify_peer);
-		ssl_context.load_verify_file("C:/PEM_FILES/isrg_cert.pem");
+		ssl_context.load_verify_file(pem);
 		boost::asio::io_context io_context;		
 
 		std::string ip = "159.89.49.248";

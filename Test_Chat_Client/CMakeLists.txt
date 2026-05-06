@@ -85,3 +85,4 @@ endif()
 # TODO: Add tests and install targets if needed.
 install(TARGETS Test_Chat_Client DESTINATION bin)
 install(FILES config.ini DESTINATION config)
+install(FILES isrg_cert.pem DESTINATION bin)

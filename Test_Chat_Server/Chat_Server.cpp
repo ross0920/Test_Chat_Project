@@ -43,6 +43,7 @@ typedef std::deque<chat_message> chat_message_queue;
 typedef std::shared_ptr<chat_participant> chat_participant_ptr;
 typedef std::deque<voice_chat_message> vc_message_queue;
 const std::string key = "basic_password_authorization:D";
+const std::string current_version = "1.0";
 const uint8_t max_participants = 16;
 const uint8_t max_name_length = 16;
 //typedef std::shared_ptr<chat_participant> chat_participant_ptr;
@@ -377,10 +378,10 @@ public:
 	}
 
 	void send_room_leave_notifications(chat_participant_ptr participant) {
-		std::cout << "send_room_leave_notifications()\n";
+		//std::cout << "send_room_leave_notifications()\n";
 		auto iter = participant_map.find(participant->id);
 		if (iter == participant_map.end()) {
-			std::cout << "invalid participant\n";
+			//std::cout << "invalid participant\n";
 			return; }
 		auto p = participant_map.begin();
 		for (; p != participant_map.end(); ++p) {
@@ -390,8 +391,8 @@ public:
 			std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
 			msg.body_length(sizeof(sender_id));
 			msg.encode_header();
-			std::cout << "delivering leave notice of " << static_cast<int>(sender_id) <<
-				" to " << p->second->name << "\n";
+			//std::cout << "delivering leave notice of " << static_cast<int>(sender_id) <<
+			//	" to " << p->second->name << "\n";
 			p->second->deliver(msg);
 		}
 	}
@@ -1335,7 +1336,6 @@ private:
 					//std::string header = std::string(read_msg_.data(), chat_message::header_length);
 					//std::cout << "read_msg_header[" << header << "]\n";					
 					do_read_body_ssl();
-
 				}
 				else {
 					std::cerr << "read error ssl: " << ec.message() << "\n";
