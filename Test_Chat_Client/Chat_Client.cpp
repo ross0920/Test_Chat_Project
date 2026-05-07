@@ -741,8 +741,17 @@ private:
 			participant_client_map.emplace(p.id,pcd);
 		}
 	}
+	void send_version() {
+		chat_message version;
+		version.body_length(client_version.length());
+		version.set_message_type(message_type::version_check);
+		std::memcpy(version.body(), client_version.c_str(), client_version.length());
+		version.encode_header();
+		std::cout << "version length = " << version.body_length() << "\n";
+		write_ssl(version);
+	}
 	void send_authentication() {
-		chat_message auth;
+		chat_message auth;		
 		auth.body_length(key.length());
 		auth.set_message_type(message_type::authentication_response);
 		std::memcpy(auth.body(), key.c_str(), key.length());
@@ -1147,6 +1156,11 @@ private:
 				std::cout << "send heartbeat\n";
 				heartbeat_ping(m);
 				break;
+			}
+			case message_type::version_check: {
+				std::string error_message = std::string(m.body(), m.body_length());
+				std::cout << error_message << "\n";
+				std::cin.get();
 			}
 			default:
 			{ break; }

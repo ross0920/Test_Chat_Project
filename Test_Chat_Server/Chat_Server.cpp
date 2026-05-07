@@ -43,7 +43,9 @@ typedef std::deque<chat_message> chat_message_queue;
 typedef std::shared_ptr<chat_participant> chat_participant_ptr;
 typedef std::deque<voice_chat_message> vc_message_queue;
 const std::string key = "basic_password_authorization:D";
+const uint8_t key_length = 30;
 const std::string current_version = "1.0";
+const uint8_t current_version_length = 3;
 const uint8_t max_participants = 16;
 const uint8_t max_name_length = 16;
 //typedef std::shared_ptr<chat_participant> chat_participant_ptr;
@@ -1009,6 +1011,7 @@ public:
 		client_port_{client_port},
 		room_(room),
 		authenticated(false),
+		version_validated(false),
 		io_context{io_context},
 		vc_room_id(0),
 		vc_partner_ids{},
@@ -1060,6 +1063,7 @@ public:
 	void wait_for_ready() {
 		state_ = session_state::wait;
 		authenticated = false;
+		version_validated = false;
 		id = 0;
 		//do_read_header(); 
 		do_read_header_ssl();
@@ -1263,6 +1267,26 @@ private:
 		std::cout << "auth not verified\n";
 		return false;
 	}
+	bool verify_version(chat_message& msg) {
+		if(msg.body_length() != current_version_length){
+			std::cout << "bad version length: " << msg.body_length() << "\n";
+			return false;
+		}
+		std::string version(msg.body(), msg.body_length());
+		std::cout << "client_version = " << version << "\n";
+		if (version != current_version) {
+			std::cout << "bad version\n";
+			chat_message m;
+			std::string c = "client out of date\n";
+			std::memcpy(m.body(), c.c_str(), c.length());
+			m.body_length(c.length());
+			m.set_message_type(message_type::version_check);
+			m.encode_header();
+			deliver(m);
+			return false;
+		}
+		return true;
+	}
 	void store_client_udp_port(chat_message& msg) {
 		std::cout << "store_client_udp_port!\n";
 		//uint16_t port = 0;
@@ -1375,6 +1399,17 @@ private:
 					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
 					//validate client is authorized!! TODO
 					if (!authenticated) {
+						if (!version_validated) {
+							version_validated = verify_version(read_msg_);
+							if (!version_validated) {
+								ssl_socket_.async_shutdown(
+									[this, self](const boost::system::error_code& ec) {
+										boost::system::error_code ignored;
+										ssl_socket_.lowest_layer().close(ignored);
+									}
+								);
+							}
+						}
 						if (verify_authorization_response(read_msg_)) {
 							chat_message m;
 							m.body_length(session_token.length());//16 bytes/chars
@@ -1720,6 +1755,7 @@ private:
 	chat_message read_msg_;
 	chat_message_queue write_msgs_;
 	session_state state_ = session_state::wait;
+	bool version_validated = false;
 	bool authenticated = false;
 	bool running_vc = false;
 	bool feedback = true;
