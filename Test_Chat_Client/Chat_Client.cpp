@@ -79,7 +79,7 @@ constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
 constexpr float sample_rate = 48000.0f;
 constexpr ma_uint32 frame_size = 960;
-const std::string client_version = "2.0";
+const std::string client_version = "1.0";
 const std::string ip = "159.89.49.248";
 const std::string port = "5000";
 
