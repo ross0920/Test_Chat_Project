@@ -79,7 +79,10 @@ constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
 constexpr float sample_rate = 48000.0f;
 constexpr ma_uint32 frame_size = 960;
-const std::string client_version = "1.0";
+const std::string client_version = "2.0";
+const std::string ip = "159.89.49.248";
+const std::string port = "5000";
+
 
 const size_t max_playback_size = 3840;
 const int buffer_size = 38400; //19200;
@@ -310,6 +313,7 @@ struct Audio_Context {
 	chat_client* c;
 };
 
+void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window);
 void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window);
 void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window);
 template<typename Func>
@@ -330,7 +334,8 @@ enum client_state {
 	connected = 4,
 	awaiting_authentication = 5,
 	authenticated = 6,
-	receiving_request = 7
+	receiving_request = 7,
+	bad_version = 8
 };
 
 
@@ -527,17 +532,14 @@ public:
 		do_connect(endpoints);
 	}
 	void try_reconnect_ssl() {
-		std::cout << "try_reconnect_ssl()\n";
-		if (!ssl_socket_->lowest_layer().is_open()) {
-			socket_ = std::make_shared<tcp::socket>(io_context_);
-			socket_->open(tcp::v4());
-			ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket&>>(*socket_, ssl_context_);
-			ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
-			ssl_socket_->set_verify_callback(
-				std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));		
-		}
+		/*std::cout << "try_reconnect_ssl()\n";
+		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
+		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
+		ssl_socket_->set_verify_callback(
+			std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));		
 		state = client_state::connecting;
-		do_connect_ssl(endpoints);
+		do_connect_ssl(endpoints);*/
+		do_reconnect();
 	}
 	void send_ready_notification() {
 		std::cout << "send_ready_notification\n";
@@ -550,6 +552,16 @@ public:
 		//write(msg);
 		write_ssl(msg);
 	}
+	void send_version() {
+		chat_message version;
+		version.body_length(client_version.length());
+		version.set_message_type(message_type::version_check);
+		std::memcpy(version.body(), client_version.c_str(), client_version.length());
+		version.encode_header();
+		std::cout << "version length = " << version.body_length() << "\n";
+		write_ssl(version);
+	}
+
 	void write_ssl(const chat_message& msg) {
 		boost::asio::post(io_context_,
 			[this, msg]()
@@ -741,7 +753,7 @@ private:
 			participant_client_map.emplace(p.id,pcd);
 		}
 	}
-	void send_version() {
+	/*void send_version() {
 		chat_message version;
 		version.body_length(client_version.length());
 		version.set_message_type(message_type::version_check);
@@ -749,7 +761,7 @@ private:
 		version.encode_header();
 		std::cout << "version length = " << version.body_length() << "\n";
 		write_ssl(version);
-	}
+	}*/
 	void send_authentication() {
 		chat_message auth;		
 		auth.body_length(key.length());
@@ -1160,7 +1172,7 @@ private:
 			case message_type::version_check: {
 				std::string error_message = std::string(m.body(), m.body_length());
 				std::cout << error_message << "\n";
-				std::cin.get();
+				state = client_state::bad_version;
 			}
 			default:
 			{ break; }
@@ -1191,11 +1203,71 @@ private:
 				}
 			});
 	}
+	void handle_reconnect_timer(boost::system::error_code ec) {
+		std::cout << "handle_reconenct_timer\n";
+		if (!ec) {
+			do_connect_ssl_test(endpoints);
+		}
+		else {
+			//std::cout << "error handle reconnect timer: " << ec.message() << "\n";
+			return;
+
+		}
+	}
+	void do_reconnect() {
+		std::cout << "do_reconnect\n";
+		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
+		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
+		ssl_socket_->set_verify_callback(
+			std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));
+		//ssl_socket_->lowest_layer().open();
+		state = client_state::connecting;
+		//auto self = shared_from_this();
+		steady_timer_.expires_after(boost::asio::chrono::milliseconds(500));
+		std::cout << "do timer wait\n";
+		steady_timer_.async_wait([this](const boost::system::error_code& ec) {
+			std::cout << "start call to reconnect\n";
+			handle_reconnect_timer(ec); });
+		std::cout << "timer wait done\n";
+	}
+	void handshake_test() {
+		std::cout << "start handshake\n";
+		ssl_socket_->async_handshake(boost::asio::ssl::stream_base::client,
+			[this](const boost::system::error_code& error) {
+				if (!error) {
+					std::cout << "handshake succeed\n";
+					state = client_state::ready;
+					do_read_header_ssl();
+				}
+				else {
+					do_reconnect();
+					std::cout << "handshake failed: " << error.message() << "\n";
+				}
+			});
+	}
+	void do_connect_ssl_test(const tcp::resolver::results_type& endpoints) {
+		auto resolver = std::make_shared<tcp::resolver>(io_context_);
+		//auto endpoints = resolver.resolve(argv[1], argv[2]);
+		auto endpoints_new = resolver->resolve(ip, port);
+		boost::asio::async_connect(ssl_socket_->lowest_layer(), endpoints_new,
+			[this](const boost::system::error_code& error,
+				const tcp::endpoint& /*endpoint*/) {
+					std::cout << "do_connect_ssl_test()\n";
+					if (!error) {
+						handshake_test();
+					}
+					else {
+						do_reconnect();
+					}
+			});
+	}
+
 	void do_connect_ssl(const tcp::resolver::results_type& endpoints) {
 		boost::asio::async_connect(ssl_socket_->lowest_layer(), endpoints,
 			[this](const boost::system::error_code& error,
 				const tcp::endpoint& /*endpoint*/) {
 					if (!error) {
+						std::cout << "do connect ssl\n";
 						retry_delay = 1;
 						//do not set ready state until handshake is completed. it will send message to server expecting a tls handshake and cause
 						// that handshake to fail.
@@ -1274,14 +1346,30 @@ private:
 					do_read_body_ssl();
 				}
 				else {
-					std::cout << "decode_header fail\n";
+					std::cout << "decode_header faifl\n";
 					mic_test = false;
 					me.vc_state = voice_chat_state::none;
-					state = client_state::awaiting_connection;
-					udp_socket->cancel();
-					udp_socket->close();
+					if (state != client_state::bad_version) {
+						state = client_state::awaiting_connection;
+					}
+					/*if (udp_socket && udp_socket->is_open()) {
+						udp_socket->cancel(ec);
+						udp_socket->close(ec);
+					}	*/				
+					udp_socket->cancel(ec);
+					udp_socket->close(ec);
+
 					udp_port_client = 0;
+					/*if (ssl_socket_) {
+						auto& sock = ssl_socket_->lowest_layer();
+						if (sock.is_open()) {
+							sock.cancel(ec);
+							sock.close(ec);
+						}
+					}	*/		
+					//ssl_socket_->lowest_layer().cancel();
 					ssl_socket_->lowest_layer().close();
+					//steady_timer_.cancel();
 					msg_history.clear();
 					participant_names.clear();
 					participants.clear();
@@ -1432,7 +1520,7 @@ private:
 	boost::asio::io_context& io_context_;
 	boost::asio::ssl::context& ssl_context_;
 	std::shared_ptr<tcp::socket> socket_;
-	std::unique_ptr <boost::asio::ssl::stream<tcp::socket&>> ssl_socket_;//must come after socket_ and ssl_context_
+	std::unique_ptr <boost::asio::ssl::stream<tcp::socket>> ssl_socket_;//must come after socket_ and ssl_context_
 	uint16_t udp_port_server;
 	uint16_t udp_port_client;
 	std::shared_ptr<udp::socket> udp_socket;
@@ -1449,6 +1537,7 @@ private:
 	ma_context ma_capture_context;
 	ma_context ma_playback_context;
 	std::array<uint8_t, 1500>recv_buffer_;
+	boost::asio::steady_timer steady_timer_;
 
 	chat_client(boost::asio::io_context& io_context,
 		boost::asio::ssl::context& ssl_context,
@@ -1458,10 +1547,10 @@ private:
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, 
 		audio_ctx{frame_size, sample_rate, this},
-		me()
+		me(), steady_timer_{io_context}
 	{	
 
-		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket&>>(*socket_, ssl_context_);
+		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
 		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
 		ssl_socket_->set_verify_callback(
 			std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));
@@ -1478,7 +1567,7 @@ private:
 		//init_capture_rb();
 		//init_playback_rb();
 		//do_connect(endpoints);
-		do_connect_ssl(endpoints);
+		do_connect_ssl_test(endpoints);
 		session_token = "";
 		auto client_ep = udp_socket->local_endpoint();
 		udp_port_client = client_ep.port();
@@ -1608,6 +1697,10 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
 	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
 	//std::cout << "c.state = " << c.state << "\n";
+	if (c->state == client_state::bad_version) {
+		draw_bad_version_window(c, window);
+		return;
+	}
 	if (c->state == client_state::awaiting_connection || c->state == client_state::connecting || !authenticated) {		
 		draw_disconnect_window(c, window);
 		return;
@@ -1899,6 +1992,27 @@ void enter_name_window(std::shared_ptr<chat_client>& c) {
 	}
 	ImGui::End();
 }
+void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
+	static bool no_resize = true;
+	static bool no_move = true;
+	static bool no_titlebar = true;
+	static bool no_menu = false;
+	ImGuiWindowFlags window_flags = 0;
+	if (no_resize)          window_flags |= ImGuiWindowFlags_NoResize;
+	if (no_move)            window_flags |= ImGuiWindowFlags_NoMove;
+	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
+	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
+	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
+	ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
+	ImGui::Begin("Bad_Version", NULL, window_flags);
+	//draw_menu_bar(c, window);
+	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.3f, main_viewport->Size.y * 0.5f));
+	ImGui::SetNextItemWidth(200);
+	std::string text = "Client out of date - get latest version at magoogan.duckdns.org";
+	ImGui::Text(text.c_str());
+	ImGui::End();
+}
 void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	static bool no_resize = true;
 	static bool no_move = true;
@@ -1924,7 +2038,8 @@ void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* w
 	ImGui::Text(text.c_str());
 	ImGui::End();
 	if (c->state == client_state::ready) {
-		c->send_ready_notification();
+		//c->send_ready_notification();
+		c->send_version();
 	}
 }
 void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
@@ -1964,7 +2079,7 @@ void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window)
 	if(c->state == client_state::awaiting_connection){
 		//std::cout << "awaiting_connection try_reconnect()\n";
 		//c->try_reconnect();
-		c->try_reconnect_ssl(); //TODO re-enable try_connect when I get tls working
+		c->try_reconnect_ssl(); //TODO re-enable try_connect when I get tls working	
 	}
 }
 template<typename Func>
@@ -3278,15 +3393,20 @@ int main(int argc, char* argv[])
 		ssl_context.load_verify_file(pem);
 		boost::asio::io_context io_context;		
 
-		std::string ip = "159.89.49.248";
-		std::string port = "5000";
 		tcp::resolver resolver(io_context);
 		//auto endpoints = resolver.resolve(argv[1], argv[2]);
 		auto endpoints = resolver.resolve(ip, port);
 		std::shared_ptr<chat_client> c = chat_client::create(io_context, ssl_context, endpoints, window);
 		c->server_ip = ip;
 
-		std::thread t([&io_context]() { io_context.run(); });
+		std::thread t([&io_context]() { 
+			try {
+				io_context.run();
+			} 
+			catch(const std::exception& e){
+				std::cerr << "FATAL exception: " << e.what() << "\n";
+			}
+			});
 		boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard(io_context.get_executor());
 		char line[chat_message::max_body_length + 1];
 		static ImGuiID last_active_id = 0;

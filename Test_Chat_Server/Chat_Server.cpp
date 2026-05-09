@@ -1270,6 +1270,8 @@ private:
 	bool verify_version(chat_message& msg) {
 		if(msg.body_length() != current_version_length){
 			std::cout << "bad version length: " << msg.body_length() << "\n";
+			std::string v = std::string(msg.body(), msg.body_length());
+			std::cout << "msg body() = " << v << "\n";
 			return false;
 		}
 		std::string version(msg.body(), msg.body_length());
@@ -1341,7 +1343,7 @@ private:
 		ssl_socket_.async_handshake(boost::asio::ssl::stream_base::server,
 			[this, self](const boost::system::error_code& ec) {
 				if (!ec) {
-					//std::cout << "handshake success\n";
+					std::cout << "handshake success\n";
 					wait_for_ready();
 				}
 				else {
@@ -1808,7 +1810,7 @@ private:
 				boost::asio::ip::address ip = remote_ep.address();
 				std::string client_ip = ip.to_string();
 				unsigned short client_port = remote_ep.port();
-				std::cout << "tcp connection from [" << client_ip << "] on port[" << client_port << "]\n";
+				std::cout << "ssl tcp connection from [" << client_ip << "] on port[" << client_port << "]\n";
 				if (!ec) {
 					std::make_shared<chat_session>(boost::asio::ssl::stream<tcp::socket>(std::move(socket), ssl_context_),
 						std::move(socket), remote_ep, udp_socket_, udp_endpoint_, client_port, room_, io_context_)->start_ssl();
