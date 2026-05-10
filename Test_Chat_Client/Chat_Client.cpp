@@ -1747,14 +1747,17 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	}
 	if(awaiting_change_response)//render the windows but don't allow interaction until approval response
 		window_flags |= ImGuiWindowFlags_NoMouseInputs | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBringToFrontOnFocus;
+	ImGuiIO io = ImGui::GetIO();
+	float monitor_width = io.DisplaySize.x;
+	float monitor_height = io.DisplaySize.y;
 	ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
 	ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
 	ImGui::Begin("Input", NULL, window_flags);
-	ImGui::SetCursorPos(ImVec2(10, 30));
+	ImGui::SetCursorPos(ImVec2(monitor_width * 0.007f, monitor_height * 0.02f));
 	draw_menu_bar(c, window);
 	//ImGui::SetCursorPos(ImVec2(10, main_viewport->Size.y - 90.0f));
-	ImGui::SetCursorPos(ImVec2(10, 650.0f));
-	ImGui::SetNextItemWidth(ImGui::GetWindowSize().x - 200);
+	ImGui::SetCursorPos(ImVec2(monitor_width * 0.007f, monitor_height * 0.86f));
+	ImGui::SetNextItemWidth(ImGui::GetWindowSize().x - monitor_width * 0.1546f);
 	std::string text;
 	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
 	{
@@ -1809,17 +1812,17 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		//ImGui::Text(c.participant_names[i].c_str());
 		ImGui::PushID(iter->second.p.id);
 		//std::string participant_name_label = std::string(iter->second.p.name) + "##participant_" + std::to_string(iter->second.p.id);
-		std::string participant_name_label = std::string(iter->second.p.name) + "#" + std::to_string(iter->second.p.id);
+		std::string participant_name_label = std::string(iter->second.p.name); //+ "#" + std::to_string(iter->second.p.id);
 		ImGui::Text(participant_name_label.c_str());
 		ImGui::SameLine();
 		if (ImGui::Checkbox("", &iter->second.enable_vc.first)) {
 			//if (iter->second.enable_vc.first) {
-				std::cout << "sending vc request\n";
+				//std::cout << "sending vc request\n";
 				chat_message msg;
 				uint8_t sender_id = c->me.id;
 				uint8_t receiver_id = iter->second.p.id;
 				uint8_t enable_vc = iter->second.enable_vc.first ? 1 : 0;
-				std::cout << "Send request sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
+				//std::cout << "Send request sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
 				msg.body_length(sizeof(sender_id) + sizeof(receiver_id) + sizeof(enable_vc));
 				msg.set_message_type(message_type::vc_status_check);
 				std::memcpy(msg.body(), &sender_id, 1);
@@ -1828,135 +1831,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 				msg.encode_header();
 				c->write_ssl(msg);//TODO
 				iter->second.ps = participant_state::sending_vc_request;
-		//	}
-			/*else {
-				chat_message msg;
-				uint8_t sender_id = c->me.id;
-				uint8_t receiver_id = iter->second.p.id;
-				uint8_t enable_vc = iter->second.enable_vc.first ? 1 : 0;
-				std::cout << "disabled\n";
-			}*/
 		}
-		/*if (ImGui::CollapsingHeader(participant_name_label.c_str())) {
-			ImGui::Indent();
-			voice_chat_state vc_state = iter->second.p.vc_state;
-			//bool recieving_request = c.participants[i].recieving_request;
-			const char* label = "Voice";
-			if (ImGui::CollapsingHeader(label)) {
-				if (iter->second.p.id == c->me.id) {
-					ImGui::BeginDisabled(iter->second.ps == participant_state::sending_vc_request ||
-						iter->second.ps == participant_state::requesting_vc || iter->second.ps == participant_state::in_vc
-						|| c->me.vc_state == voice_chat_state::in_session);
-					if (ImGui::Button("Mic test")) {
-						std::cout << "sending mic test request\n";
-						//send_vc_request
-						chat_message msg;
-						uint8_t sender_id = c->me.id;
-						std::cout << "self request sender_id[" << static_cast<int>(sender_id) << "] \n";
-						msg.body_length(sizeof(sender_id));
-						msg.set_message_type(message_type::mic_test);
-						std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
-						msg.encode_header();
-						c->write_ssl(msg);//TODO
-						iter->second.ps = participant_state::sending_vc_request;
-					}
-					ImGui::EndDisabled();
-					if (mic_test) {
-						ImGui::SameLine();
-						int id = 1;
-						ImGui::PushID(id);
-						ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
-						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
-						ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(0.0f, 0.8f, 0.8f));
-						if (ImGui::Button("X")) {
-							chat_message msg;
-							uint8_t sender_id = c->me.id;
-							msg.body_length(sizeof(sender_id));
-							msg.set_message_type(message_type::end_vc);
-							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
-							msg.encode_header();
-							c->write_ssl(msg);
-							iter->second.ps = participant_state::neutral;
-						}
-						ImGui::PopStyleColor(3);
-						ImGui::PopID();						
-					}
-				}
-				else {
-					ImGui::BeginDisabled(iter->second.ps == participant_state::sending_vc_request ||
-						iter->second.ps == participant_state::requesting_vc || iter->second.ps == participant_state::in_vc
-						|| c->me.vc_state == voice_chat_state::in_session);
-					if (ImGui::Button("Send request")) {
-						std::cout << "sending vc request\n";
-						//send_vc_request
-						chat_message msg;
-						uint8_t sender_id = c->me.id;
-						uint8_t receiver_id = iter->second.p.id;
-						std::cout << "Send request sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
-						msg.body_length(sizeof(sender_id) + sizeof(receiver_id));
-						msg.set_message_type(message_type::send_vc_request);
-						std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
-						std::memcpy(msg.body() + sizeof(sender_id), &receiver_id, sizeof(receiver_id));
-						msg.encode_header();
-						c->write_ssl(msg);//TODO
-						iter->second.ps = participant_state::sending_vc_request;
-					}
-					ImGui::EndDisabled();
-					if (iter->second.ps == participant_state::in_vc) {
-						ImGui::SameLine();
-						int id = 1;
-						ImGui::PushID(id);
-						ImGui::PushStyleColor(ImGuiCol_Button, (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f));
-						ImGui::PushStyleColor(ImGuiCol_ButtonHovered, (ImVec4)ImColor::HSV(0.0f, 0.7f, 0.7f));
-						ImGui::PushStyleColor(ImGuiCol_ButtonActive, (ImVec4)ImColor::HSV(0.0f, 0.8f, 0.8f));
-						if (ImGui::Button("X")) {
-							chat_message msg;
-							uint8_t sender_id = c->me.id;
-							msg.body_length(sizeof(sender_id));
-							msg.set_message_type(message_type::end_vc);
-							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
-							msg.encode_header();
-							c->write_ssl(msg);
-							iter->second.ps = participant_state::neutral;
-						}
-						ImGui::PopStyleColor(3);
-						ImGui::PopID();
-
-					}
-				}
-				if (iter->second.ps == participant_state::requesting_vc) {
-						ImGui::Text("Accept request?");
-						if (ImGui::Button("Yes")) {
-							chat_message msg;
-							uint8_t sender_id = iter->second.p.id;//i don't have sender and receiver ids for some reason
-							uint8_t receiver_id = c->me.id;
-							std::cout << "Accept request? sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
-							msg.body_length(sizeof(sender_id) + sizeof(receiver_id));
-							msg.set_message_type(message_type::accept_vc_request);
-							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
-							std::memcpy(msg.body() + sizeof(sender_id), &receiver_id, sizeof(receiver_id));
-							msg.encode_header();
-							c->write_ssl(msg);
-							iter->second.ps = participant_state::neutral;
-						}
-						ImGui::SameLine();
-						if (ImGui::Button("No")) {
-							chat_message msg;
-							uint8_t sender_id = iter->second.p.id;
-							uint8_t receiver_id = c->me.id;
-							msg.body_length(sizeof(sender_id) + sizeof(receiver_id));
-							msg.set_message_type(message_type::reject_vc_request);
-							std::memcpy(msg.body(), &sender_id, sizeof(sender_id));
-							std::memcpy(msg.body() + sizeof(sender_id), &receiver_id, sizeof(receiver_id));
-							msg.encode_header();
-							c->write_ssl(msg);//TODO
-							iter->second.ps = participant_state::neutral;
-						}					
-				}
-				
-			}
-			ImGui::Unindent();
-		}*/
 		ImGui::PopID();
 	}
 	ImGui::EndChild();
