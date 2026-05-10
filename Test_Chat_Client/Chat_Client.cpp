@@ -90,12 +90,14 @@ const int buffer_size = 38400; //19200;
 ma_device_info* capture_devices;
 ma_uint32 capture_count = 0;
 static int selected_capture = 0;
-std::vector<char*> capture_devices_names{};
+std::vector<const char*> capture_devices_names{};
+std::vector<std::string> capture_devices_names_storage{};
 
 ma_device_info* playback_devices;
 ma_uint32 playback_count = 0;
 static int selected_playback = 0;
-std::vector<char*> playback_devices_names{};
+std::vector<const char*> playback_devices_names{};
+std::vector<std::string> playback_devices_names_storage{};
 
 bool mic_test = false;
 
@@ -313,9 +315,9 @@ struct Audio_Context {
 	chat_client* c;
 };
 
-void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window);
-void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window);
-void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window);
+void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
+void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
+void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
 template<typename Func>
 void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_client>& c);
 int start_mic(ma_device& device);
@@ -327,6 +329,8 @@ int start_device(ma_device& device);
 int stop_device(ma_device& device);
 void refresh_playback_device_list(ma_context& ma_context_);
 void refresh_capture_device_list(ma_context& ma_context_);
+int init_capture_context(ma_context& ma_context_);
+int init_playback_context(ma_context& ma_context_);
 enum client_state {
 	ready = 1,
 	awaiting_connection = 2,
@@ -1017,7 +1021,6 @@ private:
 	}
 
 	void remove_sender_from_chat(chat_message& m) {
-		//MARKER1
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
 		std::cout << "remove[" << static_cast<int>(sender_id) << "] from chat\n";
@@ -1216,6 +1219,9 @@ private:
 	}
 	void do_reconnect() {
 		std::cout << "do_reconnect\n";
+		boost::system::error_code ec;
+		ssl_socket_->lowest_layer().cancel(ec);
+		ssl_socket_->lowest_layer().close(ec);
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
 		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
 		ssl_socket_->set_verify_callback(
@@ -1225,9 +1231,10 @@ private:
 		//auto self = shared_from_this();
 		steady_timer_.expires_after(boost::asio::chrono::milliseconds(500));
 		std::cout << "do timer wait\n";
-		steady_timer_.async_wait([this](const boost::system::error_code& ec) {
+		auto self = shared_from_this();
+		steady_timer_.async_wait([self](const boost::system::error_code& ec) {
 			std::cout << "start call to reconnect\n";
-			handle_reconnect_timer(ec); });
+			self->handle_reconnect_timer(ec); });
 		std::cout << "timer wait done\n";
 	}
 	void handshake_test() {
@@ -1555,6 +1562,8 @@ private:
 		ssl_socket_->set_verify_callback(
 			std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));
 		me.id = 0;
+		init_capture_context(ma_capture_context);
+		init_playback_context(ma_playback_context);
 		init_capture();
 		init_playback();
 		audio_ctx.mix_buffer.resize(frame_size * playback_device.playback.channels);
@@ -1580,6 +1589,8 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
+	//MARKER1
+	std::cout << "start draw menu\n";
 	if (ImGui::BeginMenuBar())
 	{
 		if (ImGui::BeginMenu("Options"))
@@ -1602,8 +1613,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					ImVec2 max{};
 					ImVec2 current{};
 					static int current_capture = 0;
-					for (ma_uint32 i = 0; i < capture_count; i++) {
-						capture_devices_names[i] = capture_devices[i].name;
+					for (ma_uint32 i = 0; i < capture_devices_names.size(); i++) {
 						current = ImGui::CalcTextSize(capture_devices_names[i]);
 						if (current.x > max.x) {
 							max.x = current.x;
@@ -1614,7 +1624,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					}
 					max.x += ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFontSize();
 					ImGui::SetNextItemWidth(max.x);
-					ImGui::Combo(" ", &current_capture, capture_devices_names.data(), capture_count);
+					ImGui::Combo(" ", &current_capture, capture_devices_names.data(), capture_devices_names.size());
 					if (current_capture != selected_capture) {
 						selected_capture = current_capture;
 						c->uninit_capture();
@@ -1633,9 +1643,8 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					//char** items = new char* [playback_count];
 					ImVec2 max{};
 					ImVec2 current{};
-					static int current_playback = 0;
-					for (ma_uint32 i = 0; i < playback_count; i++) {
-						playback_devices_names[i] = playback_devices[i].name;
+					static int current_playback = 0;					
+					for (ma_uint32 i = 0; i < playback_devices_names.size(); i++) {
 						current = ImGui::CalcTextSize(playback_devices_names[i]);
 						if (current.x > max.x) {
 							max.x = current.x;
@@ -1646,7 +1655,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					}
 					max.x += ImGui::GetStyle().FramePadding.x * 2 + ImGui::GetFontSize();
 					ImGui::SetNextItemWidth(max.x);
-					ImGui::Combo(" ", &current_playback, playback_devices_names.data(), playback_count);
+					ImGui::Combo(" ", &current_playback, playback_devices_names.data(), playback_devices_names.size());
 					if (current_playback != selected_playback) {
 						selected_playback = current_playback;
 						c->uninit_playback();
@@ -1671,7 +1680,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			}
 			ImGui::EndMenu();
 		}
-
+		std::cout << "end draw menu\n";
 	}
 	ImGui::EndMenuBar();
 }
@@ -1684,7 +1693,151 @@ int screenHeight;
 bool participant_header_enabled = false;
 
 void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
-	static bool no_resize = true;
+	std::cout << "draw chat window\n";
+	ImVec2 display = ImGui::GetIO().DisplaySize;
+	ImVec2 size(display.x, display.y);
+	ImVec2 position((display.x - size.x) * 0.5f,
+		(display.y - size.y) * 0.5f);
+
+	ImGui::SetNextWindowPos(position);
+	ImGui::SetNextWindowSize(size);
+
+	ImGuiWindowFlags flags = 
+		ImGuiWindowFlags_NoDecoration |
+		ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_NoResize |
+		ImGuiWindowFlags_NoSavedSettings |
+		ImGuiWindowFlags_NoBringToFrontOnFocus |
+		ImGuiWindowFlags_NoNav |
+		ImGuiWindowFlags_MenuBar;
+
+	if (c->state == client_state::bad_version) {
+		draw_bad_version_window(c, window, size, position);
+		return;
+	}
+	if (c->state == client_state::awaiting_connection || c->state == client_state::connecting || !authenticated) {
+		draw_disconnect_window(c, window, size, position);
+		return;
+	}
+	if (c->state == client_state::ready || c->state == client_state::awaiting_authentication) {
+		draw_start_connection_window(c, window, size, position);
+		return;
+	}
+	if (ImGui::IsMouseClicked(0)) {
+		first_enter = false;
+	}
+	//std::cout << "change_name = " << change_name << "awaiting_change_response = " << awaiting_change_response << "\n";
+	if (change_name && !awaiting_change_response) {
+		//std::cout << "change name\n";
+		ImGui::SetNextWindowPos(position);
+		ImGui::SetNextWindowSize(size);
+		ImGui::Begin("Name", NULL, flags);
+		draw_menu_bar(c, window);
+		ImGui::SetCursorPos(ImVec2(size.x * 0.35f, size.y * 0.5f));
+		ImGui::SetNextItemWidth(size.x * 0.3f);
+		std::string text;
+		static std::string hint;
+		hint = "Enter name";
+		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
+		{
+			ImGui::SetKeyboardFocusHere(0);
+		}
+		if (ImGui::InputTextWithHint("##Name", hint.c_str(), &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
+			chat_message msg;
+			uint8_t id = c->me.id;
+			msg.body_length(sizeof(id) + text.size());
+			msg.set_message_type(message_type::name_change_request);
+			std::memcpy(msg.body(), &id, sizeof(uint8_t));
+			std::memcpy(msg.body() + sizeof(uint8_t), text.c_str(), text.size());
+			msg.encode_header();
+			c->write_ssl(msg);
+			hint = "";
+			awaiting_change_response = true;
+			text.clear();
+		}
+		ImGui::End();
+		return;
+	}
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 255));
+
+	ImGui::Begin("Main_Window", nullptr, flags);
+
+	ImGui::PopStyleColor();
+
+
+	draw_menu_bar(c, window);
+	ImGui::SetCursorPos(ImVec2(size.x * 0.04f, size.y * 0.95f));
+	ImGui::SetNextItemWidth(size.x * 0.7f);
+	std::string text;
+	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
+	{
+		ImGui::SetKeyboardFocusHere(0);
+	}
+	if (ImGui::InputText("##Input Text", &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
+		chat_message msg;
+		msg.body_length(text.length());
+		msg.set_message_type(message_type::chat);
+		std::memcpy(msg.body(), text.c_str(), msg.body_length());
+		msg.encode_header();
+		c->write_ssl(msg);
+		text.clear();
+		was_focused = true;
+	}
+	if (was_focused) {
+		ImGui::SetKeyboardFocusHere(-1);
+		was_focused = false;
+	}
+	ImGui::SetCursorPos(ImVec2(size.x * 0.01f, size.y * 0.05f));
+	ImGui::BeginChild("Output Text", ImVec2(size.x * 0.98f, size.y * 0.98f), ImGuiChildFlags_Borders);
+	for (const auto& m : msg_history) {
+		ImGui::TextWrapped("%s", m.c_str());
+	}
+	if (msg_rcvd) {
+		ImGui::SetScrollHereY(0.999f);
+		msg_rcvd = false;
+	}
+	ImGui::EndChild();
+
+	ImGui::SetCursorPos(ImVec2(size.x * 0.75f, size.y * 0.12f));
+
+	ImGuiWindowFlags scroll_flags = 0;
+	scroll_flags |= ImGuiWindowFlags_NoTitleBar;
+	scroll_flags |= ImGuiWindowFlags_NoMove;
+	scroll_flags |= ImGuiWindowFlags_NoResize;
+	scroll_flags |= ImGuiWindowFlags_NoCollapse;
+	scroll_flags |= ImGuiWindowFlags_HorizontalScrollbar;
+
+	ImGui::BeginChild("ChildL", ImVec2(size.x * 0.1f, size.y * 0.8f), ImGuiChildFlags_None, scroll_flags);
+	ImGui::Text("Room");
+	ImGui::Separator();
+	std::unordered_map<uint8_t, participant_client_data>::iterator iter = c->participant_client_map.begin();
+	for (; iter != c->participant_client_map.end(); ++iter) {
+		ImGui::PushID(iter->second.p.id);
+		std::string participant_name_label = std::string(iter->second.p.name); //+ "#" + std::to_string(iter->second.p.id);
+		ImGui::Text(participant_name_label.c_str());
+		ImGui::SameLine();
+		if (ImGui::Checkbox("", &iter->second.enable_vc.first)) {
+			chat_message msg;
+			uint8_t sender_id = c->me.id;
+			uint8_t receiver_id = iter->second.p.id;
+			uint8_t enable_vc = iter->second.enable_vc.first ? 1 : 0;
+			msg.body_length(sizeof(sender_id) + sizeof(receiver_id) + sizeof(enable_vc));
+			msg.set_message_type(message_type::vc_status_check);
+			std::memcpy(msg.body(), &sender_id, 1);
+			std::memcpy(msg.body() + 1, &receiver_id, 1);
+			std::memcpy(msg.body() + 2, &enable_vc, 1);
+			msg.encode_header();
+			c->write_ssl(msg);
+			iter->second.ps = participant_state::sending_vc_request;
+		}
+		ImGui::PopID();
+	}
+	ImGui::EndChild();
+
+	ImGui::End();
+	std::cout << "draw chat window end\n";
+
+	/*static bool no_resize = false;
 	static bool no_move = true;
 	static bool no_titlebar = true;
 	static bool no_menu = false;
@@ -1695,7 +1848,13 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	if (no_move)            window_flags |= ImGuiWindowFlags_NoMove;
 	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
+	ImGuiWindowFlags input_flags =
+		ImGuiWindowFlags_NoDecoration |
+		ImGuiWindowFlags_NoResize |
+		ImGuiWindowFlags_NoMove;
+
 	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+	std::cout << "main viewport.x " << main_viewport->Size.x << " main viewport.y " << main_viewport->Size.y << "\n";
 	//std::cout << "c.state = " << c.state << "\n";
 	if (c->state == client_state::bad_version) {
 		draw_bad_version_window(c, window);
@@ -1715,8 +1874,8 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	//std::cout << "change_name = " << change_name << "awaiting_change_response = " << awaiting_change_response << "\n";
 	if (change_name && !awaiting_change_response) {
 		//std::cout << "change name\n";
-		ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
-		ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
+		ImGui::SetNextWindowPos(main_viewport->Pos);
+		ImGui::SetNextWindowSize(main_viewport->Size);
 		ImGui::Begin("Name", NULL, window_flags);
 		draw_menu_bar(c, window);
 		ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.5f - 100.0f, main_viewport->Size.y * 0.5f));
@@ -1745,19 +1904,24 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		ImGui::End();
 		return;
 	}
-	if(awaiting_change_response)//render the windows but don't allow interaction until approval response
+	//if(awaiting_change_response)//render the windows but don't allow interaction until approval response
 		window_flags |= ImGuiWindowFlags_NoMouseInputs | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBringToFrontOnFocus;
 	ImGuiIO io = ImGui::GetIO();
 	float monitor_width = io.DisplaySize.x;
 	float monitor_height = io.DisplaySize.y;
-	ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
-	ImGui::Begin("Input", NULL, window_flags);
-	ImGui::SetCursorPos(ImVec2(monitor_width * 0.007f, monitor_height * 0.02f));
+	int w, h;
+	glfwGetWindowSize(window, &w, &h);
+	ImVec2 window_size = ImVec2(w, h);
+	ImGui::SetNextWindowPos(main_viewport->Pos);
+	ImGui::SetNextWindowSize(window_size);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+	ImGui::Begin("Main_Window", NULL, window_flags);
+	ImGui::PopStyleVar();
+	//ImGui::SetCursorPos(ImVec2(main_viewport->Size.x, main_viewport->Size.y));
 	draw_menu_bar(c, window);
 	//ImGui::SetCursorPos(ImVec2(10, main_viewport->Size.y - 90.0f));
-	ImGui::SetCursorPos(ImVec2(monitor_width * 0.007f, monitor_height * 0.86f));
-	ImGui::SetNextItemWidth(ImGui::GetWindowSize().x - monitor_width * 0.1546f);
+	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.01f, main_viewport->Size.y));
+	ImGui::SetNextItemWidth(main_viewport->Size.x * 0.7f);
 	std::string text;
 	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
 	{
@@ -1777,9 +1941,9 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	if (was_focused) {
 		ImGui::SetKeyboardFocusHere(-1);
 		was_focused = false;
-	}
-	ImGui::SetCursorPos(ImVec2(10, 40));
-	ImGui::BeginChild("Output Text", ImVec2(ImGui::GetWindowSize().x - 200, 600.0f), ImGuiChildFlags_Borders);
+	}*/
+	/*ImGui::SetCursorPos(ImVec2(10, 40));
+	ImGui::BeginChild("Output Text", ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiChildFlags_Borders);
 	for (const auto& m : msg_history) {
 		//ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 200);
 		//ImGui::TextUnformatted("%s", m.c_str());
@@ -1791,7 +1955,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		msg_rcvd = false;
 	}
 	ImGui::EndChild();
-	ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x - 170.0f, 40.0f));
+	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x , main_viewport->Size.y));
 
 	ImGuiWindowFlags scroll_flags = 0;
 	scroll_flags |= ImGuiWindowFlags_NoTitleBar;
@@ -1800,13 +1964,9 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	scroll_flags |= ImGuiWindowFlags_NoCollapse;
 	scroll_flags |= ImGuiWindowFlags_HorizontalScrollbar;
 
-	ImGui::BeginChild("ChildL", ImVec2(150.0f, 600), ImGuiChildFlags_None, scroll_flags);
+	ImGui::BeginChild("ChildL", ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiChildFlags_None, scroll_flags);
 	ImGui::Text("Room");
 	ImGui::Separator();	
-	/*for (int i = 0; i < c->participant_names.size(); i++) {
-		std::string n = c->participant_names[i];
-		//ImGui::Text(n.c_str());
-	}*/
 	std::unordered_map<uint8_t, participant_client_data>::iterator iter = c->participant_client_map.begin();
 	for (; iter != c->participant_client_map.end(); ++iter) {
 		//ImGui::Text(c.participant_names[i].c_str());
@@ -1835,7 +1995,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		ImGui::PopID();
 	}
 	ImGui::EndChild();
-	ImGui::End();
+	ImGui::End();*/
 }
 void enter_name_window(std::shared_ptr<chat_client>& c) {
 	static bool no_resize = true;
@@ -1867,7 +2027,7 @@ void enter_name_window(std::shared_ptr<chat_client>& c) {
 	}
 	ImGui::End();
 }
-void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
+void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position) {
 	static bool no_resize = true;
 	static bool no_move = true;
 	static bool no_titlebar = true;
@@ -1877,18 +2037,14 @@ void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window
 	if (no_move)            window_flags |= ImGuiWindowFlags_NoMove;
 	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
-	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
 	ImGui::Begin("Bad_Version", NULL, window_flags);
 	//draw_menu_bar(c, window);
-	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.3f, main_viewport->Size.y * 0.5f));
-	ImGui::SetNextItemWidth(200);
+	ImGui::SetCursorPos(ImVec2(size.x * 0.17f, size.y * 0.5f));
 	std::string text = "Client out of date - get latest version at magoogan.duckdns.org";
 	ImGui::Text(text.c_str());
 	ImGui::End();
 }
-void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
+void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position) {
 	static bool no_resize = true;
 	static bool no_move = true;
 	static bool no_titlebar = true;
@@ -1899,12 +2055,10 @@ void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* w
 	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
 	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
 	ImGui::Begin("Open", NULL, window_flags);
-	draw_menu_bar(c, window);
-	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.5f - 100.0f, main_viewport->Size.y * 0.5f));
-	ImGui::SetNextItemWidth(200);
+	//draw_menu_bar(c, window);
+	ImGui::SetCursorPos(ImVec2(size.x * 0.4f, size.y * 0.5f));
+	ImGui::SetNextItemWidth(size.x * 0.4f);
 	std::string text = "Start connection";
 	for (int i = 0; i < dots; i++) {
 		text = text + ".";
@@ -1913,11 +2067,10 @@ void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* w
 	ImGui::Text(text.c_str());
 	ImGui::End();
 	if (c->state == client_state::ready) {
-		//c->send_ready_notification();
 		c->send_version();
 	}
 }
-void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
+void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position) {
 	static bool no_resize = true;
 	static bool no_move = true;
 	static bool no_titlebar = true;
@@ -1928,12 +2081,10 @@ void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window)
 	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
 	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(ImVec2(main_viewport->WorkPos.x + 0, main_viewport->WorkPos.y + 0), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiCond_Once);
 	ImGui::Begin("Connecting", NULL, window_flags);
-	draw_menu_bar(c, window);
-	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.5f - 100.0f, main_viewport->Size.y * 0.5f));
-	ImGui::SetNextItemWidth(200);
+	//draw_menu_bar(c, window);
+	ImGui::SetCursorPos(ImVec2(size.x * 0.4f, size.y * 0.5f));
+	ImGui::SetNextItemWidth(size.x * 0.4f);
 	std::string text = "Connecting";
 	for (int i = 0; i < dots; i++) {
 		text = text + ".";
@@ -1941,20 +2092,8 @@ void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window)
 	dots = std::fmod(dots + static_cast<float>(delta_time.count()),4);
 	ImGui::Text(text.c_str());
 	ImGui::End();
-	//ping_timer += static_cast<float>(delta_time.count());
-	//if (ping_timer > ping_interval) {
-		/*chat_message msg;
-		std::string textt = "ping";
-		msg.body_length(textt.length());
-		msg.set_message_type(message_type::ping);
-		std::memcpy(msg.body(), textt.c_str(), msg.body_length());
-		msg.encode_header();
-		c.write(msg);*/
-		//ping_timer = 0.0f;
 	if(c->state == client_state::awaiting_connection){
-		//std::cout << "awaiting_connection try_reconnect()\n";
-		//c->try_reconnect();
-		c->try_reconnect_ssl(); //TODO re-enable try_connect when I get tls working	
+		c->try_reconnect_ssl();
 	}
 }
 template<typename Func>
@@ -2500,31 +2639,58 @@ void worker_thread() {
 void refresh_capture_device_list(ma_context& ma_context_) {
 	ma_context_get_devices(&ma_context_, NULL, NULL, &capture_devices, &capture_count);
 	capture_devices_names.clear();
+	capture_devices_names_storage.clear();
 	for (ma_uint32 i = 0; i < capture_count; i++) {
-		std::cout << i << ": " << capture_devices[i].name << "\n";
-		capture_devices_names.push_back(capture_devices[i].name);
+		//std::cout << i << ": " << capture_devices[i].name << "\n";
+		capture_devices_names_storage.emplace_back(capture_devices[i].name);
+		capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
 	}
 }
 void refresh_playback_device_list(ma_context& ma_context_) {
 	ma_context_get_devices(&ma_context_, &playback_devices, &playback_count, NULL, NULL);
 	playback_devices_names.clear();
+	playback_devices_names_storage.clear();
 	for (ma_uint32 i = 0; i < playback_count; i++) {
-		std::cout << i << ": " << playback_devices[i].name << "\n";
-		playback_devices_names.push_back(playback_devices[i].name);
+		//std::cout << i << ": " << playback_devices[i].name << "\n";
+		playback_devices_names_storage.emplace_back(playback_devices[i].name);
+		playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
 	}
 }
-
+int init_capture_context(ma_context& ma_context_) {
+	ma_result result;
+	result = ma_context_init(NULL, 0, NULL, &ma_context_);
+	if (result != MA_SUCCESS) {
+		std::cout << "Failed to initialize capture context\n";
+		return -1;
+	}
+}
+int init_playback_context(ma_context& ma_context_) {
+	ma_result result;
+	result = ma_context_init(NULL, 0, NULL, &ma_context_);
+	if (result != MA_SUCCESS) {
+		std::cout << "Failed to initialize capture context\n";
+		return -1;
+	}
+}
 int init_capture_device_test(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx) {
 	ma_result result;
 	ma_device_config deviceConfigCapture;
-	ma_context_init(NULL, 0, NULL, &ma_context_);
-	ma_context_get_devices(&ma_context_, NULL, NULL, &capture_devices, &capture_count);
+	result = ma_context_get_devices(&ma_context_, NULL, NULL, &capture_devices, &capture_count);
+	if (result != MA_SUCCESS) {
+		std::cout << "Failed to get capture device\n";
+		return -1;
+	}
 	capture_devices_names.clear();
+	capture_devices_names_storage.clear();
 	for (ma_uint32 i = 0; i < capture_count; i++) {
-		std::cout << i << ": " << capture_devices[i].name << "\n";
-		capture_devices_names.push_back(capture_devices[i].name);
+		//std::cout << i << ": " << capture_devices[i].name << "\n";
+		capture_devices_names_storage.emplace_back(capture_devices[i].name);
+		capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
 	}
 	if (capture_count > 0) {
+		if (selected_capture >= capture_count) { 
+			std::cout << "selected_capture >= capture count\n";
+			return -1; }
 		std::cout << "selecting " << capture_devices[selected_capture].name << "\n";
 	}
 	deviceConfigCapture = ma_device_config_init(ma_device_type_capture);
@@ -2541,19 +2707,29 @@ int init_capture_device_test(ma_device& device_, ma_context& ma_context_, Audio_
 	}
 }
 int init_playback_device_test(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx) {
+	//MARKER2
 	ma_result result;
 	ma_device_config deviceConfigPlayback;
-	ma_context_init(NULL, 0, NULL, &ma_context_);
 	//ma_device_info* playback_devices;
 	//ma_uint32 playback_count;
-	ma_context_get_devices(&ma_context_, &playback_devices, &playback_count, NULL, NULL);
+	result = ma_context_get_devices(&ma_context_, &playback_devices, &playback_count, NULL, NULL);
+	if (result != MA_SUCCESS) {
+		std::cout << "Failed to get capture devices\n";
+		return -1;
+	}
 	playback_devices_names.clear();
+	playback_devices_names_storage.clear();
 	for (ma_uint32 i = 0; i < playback_count; i++) {
-		std::cout << i << ": " << playback_devices[i].name << "\n";
-		playback_devices_names.push_back(playback_devices[i].name);
+		//std::cout << i << ": " << playback_devices[i].name << "\n";
+		playback_devices_names_storage.emplace_back(playback_devices[i].name);
+		playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
 	}
 	if (playback_count > 0) {
-		std::cout << "selecting " << playback_devices[selected_playback].name << "\n";
+		if (selected_playback >= playback_count) {
+			std::cout << "selected_playback >= playback_count\n";
+			return -1;
+		}
+		//std::cout << "selecting " << playback_devices[selected_playback].name << "\n";
 	}
 	deviceConfigPlayback = ma_device_config_init(ma_device_type_playback);
 	deviceConfigPlayback.playback.format = ma_format_f32;
@@ -3225,12 +3401,20 @@ int main(int argc, char* argv[])
 	glfwSetErrorCallback(glfw_error_callback);
 	if (!glfwInit())
 		return 1;
+	//GLFWmonitor* mon = glfwGetPrimaryMonitor();
+	//const GLFWvidmode* mode = glfwGetVideoMode(mon);
+
 	const char* glsl_version = "#version 130";
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+	glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
+	glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+
+	//glfwWindowHint(GLFW_FLOATING, GLFW_TRUE);
 
 	float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only
-	GLFWwindow* window = glfwCreateWindow((int)(1280 * main_scale), (int)(800 * main_scale), "Chat", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow((int)(640 * main_scale), (int)(400 * main_scale), "Chat", nullptr, nullptr);
+	//GLFWwindow* window = glfwCreateWindow(mode->width, mode->height, "Chat", nullptr, nullptr);
 	if (window == nullptr)
 		return 1;
 	glfwMakeContextCurrent(window);
