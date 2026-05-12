@@ -70,6 +70,7 @@ static bool awaiting_change_response = false; //account for delay between client
 static float dots = 0;
 static float ping_timer = 0;
 static float ping_interval = 3;
+static float gain = 0;
 const std::string key = "basic_password_authorization:D";
 std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
 std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
@@ -213,6 +214,16 @@ private:
 	float noise_floor;
 	std::chrono::steady_clock::time_point last_update;
 };
+class gain_processing {
+	//MARKER2
+public:
+	void apply_gain(float* dst, const float* src, size_t count, float gain) {
+		for (size_t i = 0; i < count; ++i) {
+			dst[i] = src[i] * gain;
+		}
+	}
+};
+
 class rbs {
 public:
 	ma_rb capture_rb;
@@ -281,6 +292,7 @@ struct Audio_Context {
 		encoder{ nullptr }, decoder{ nullptr },
 		hp_filter{},
 		lp_filter{},
+		gain_processing{},
 		c{c_}
 	{
 		if (c == nullptr) { std::cout << "audio context c = nullptr\n"; }
@@ -295,8 +307,10 @@ struct Audio_Context {
 	float gain;
 	NoiseProfile noise_profile;
 	//SpectralSuppressor spectral_suppressor;
+
 	HighPassFilter hp_filter;
 	BiquadFilter lp_filter;
+	gain_processing gain_processing;
 	ma_uint32 silence_frames;
 	ma_uint32 fade_index;
 	const ma_uint32 fade_duration;
@@ -1673,6 +1687,10 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 				if (ImGui::Button("Refresh devices")) {
 					c->refresh_devices();
 				}
+				if (ImGui::BeginMenu("Controls")) {
+					ImGui::SliderFloat("##Gain", & gain, 0.0f, 100.0f, "Mic Gain: %.0f");
+					ImGui::EndMenu();
+				}
 				ImGui::EndMenu();
 			}
 			if (ImGui::MenuItem("Exit")) {
@@ -1727,12 +1745,12 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		first_enter = false;
 	}
 	//std::cout << "change_name = " << change_name << "awaiting_change_response = " << awaiting_change_response << "\n";
-	if (change_name && !awaiting_change_response) {
+	if (change_name && !awaiting_change_response || !has_name) {
 		//std::cout << "change name\n";
 		ImGui::SetNextWindowPos(position);
 		ImGui::SetNextWindowSize(size);
 		ImGui::Begin("Name", NULL, flags);
-		draw_menu_bar(c, window);
+		//draw_menu_bar(c, window);
 		ImGui::SetCursorPos(ImVec2(size.x * 0.35f, size.y * 0.5f));
 		ImGui::SetNextItemWidth(size.x * 0.3f);
 		std::string text;
@@ -1763,8 +1781,6 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	ImGui::Begin("Main_Window", nullptr, flags);
 
 	ImGui::PopStyleColor();
-
-
 	draw_menu_bar(c, window);
 	ImGui::SetCursorPos(ImVec2(size.x * 0.04f, size.y * 0.95f));
 	ImGui::SetNextItemWidth(size.x * 0.7f);
@@ -1773,6 +1789,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	{
 		ImGui::SetKeyboardFocusHere(0);
 	}
+	//can't get focus back to this once lose it??
 	if (ImGui::InputText("##Input Text", &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
 		chat_message msg;
 		msg.body_length(text.length());
@@ -2226,6 +2243,7 @@ void fade_out(ma_uint32 frame_count, Audio_Context* ctx, int16_t* out) {
 	}
 }
 void duplex_data_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
+	//MARKER1
 	auto* ctx = static_cast<Audio_Context*>(device->pUserData);
 	auto* in = static_cast<const int16_t*>(input);
 	auto* out = static_cast<int16_t*>(output);
@@ -2252,10 +2270,8 @@ void duplex_data_callback(ma_device* device, void* output, const void* input, ma
 			}
 		}
 	}
-
 	float target_gain = ctx->speaking ? ctx->gain : 1.0f;
 	ctx->current_gain += (target_gain - ctx->current_gain) * 0.05f;
-
 	if (!ctx->speaking) {
 		ctx->noise_profile.update(in, frame_count);
 		if (!ctx->fading_out) {
@@ -2347,9 +2363,6 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 		ma_result result = 
 			ma_pcm_rb_acquire_read(&iter->second.playback_rb, &frames_to_read, &p_in);
 		if (result != MA_SUCCESS || frames_to_read == 0) {
-			//std::cout << "playback rb available read space = " << ma_pcm_rb_available_read(&iter->second.playback_rb) << "\n";
-			//std::cout << "playback rb available write space = " << ma_pcm_rb_available_write(&iter->second.playback_rb) << "\n";
-			//std::cout << "playback rb read fail: result = " << result << " frames_to_read = " << frames_to_read << "\n";
 			continue;
 		}
 		float* in = (float*)p_in;
@@ -2446,8 +2459,52 @@ void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFr
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	ma_result result;
 	ma_uint32 framesWritten;
+	framesWritten = 0;	
+
+	while (framesWritten < frameCount && ctx->c->running_capture_) {
+		//std::cout << "START frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
+		void* pMappedBuffer;
+		ma_uint32 framesToWrite = frameCount - framesWritten;
+		size_t sizeInBytes;
+		sizeInBytes = framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels);
+		result = ma_rb_acquire_write(&ctx->ring_buffer, &sizeInBytes, &pMappedBuffer);
+		//std::cout << "sizeInBytes after acquire = " << sizeInBytes << "\n";
+		if (result != MA_SUCCESS) {
+			std::cerr << "acquire_write fail " << " size = " << sizeInBytes << "\n";
+			break;
+		}
+		framesToWrite = (ma_uint32)(sizeInBytes / ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
+
+		if (framesToWrite == 0) {
+			//std::cerr << "framesToWrite == 0\n";
+			break;
+		}
+		//std::cout << "framesToWrite = " << framesToWrite << "\n";
+		const float* in = ((const float*)pFramesIn) + (framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
+		
+		const float sample_count = framesToWrite * pDevice->capture.channels;
+		std::vector<float> out(sample_count);
+		ctx->gain_processing.apply_gain(out.data(), in, sample_count, powf(10.0f, (gain * 0.1f) / 20.0f));
+		
+		std::memcpy(pMappedBuffer, out.data(), sizeInBytes);
+		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
+
+		if (result != MA_SUCCESS) {
+			std::cout << "commit write fails\n";
+			break;
+		}
+		framesWritten += framesToWrite;
+		//std::cout << "END frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
+	}
+}
+void capture_callback_test_old(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
+	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
+
+	ma_result result;
+	ma_uint32 framesWritten;
 	(void)pFramesOut;
 	framesWritten = 0;
+
 	while (framesWritten < frameCount && ctx->c->running_capture_) {
 		//std::cout << "START frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
 		void* pMappedBuffer;
@@ -2471,7 +2528,12 @@ void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFr
 			break;
 		}
 		//std::cout << "framesToWrite = " << framesToWrite << "\n";
+		ma_uint32 written_bytes = framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels);
 		const void* in = (((ma_uint8*)((const float*)pFramesIn)) + (framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels)));
+
+		float out[4000];
+		ctx->gain_processing.apply_gain(out, (float*)in, framesToWrite * pDevice->capture.channels, gain);
+
 		std::memcpy(pMappedBuffer, in, sizeInBytes);
 		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
 
@@ -2483,6 +2545,7 @@ void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFr
 		//std::cout << "END frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
 	}
 }
+
 void playback_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
 	auto* ctx = static_cast<Audio_Context*>(device->pUserData);
 	if (ctx->c->session_token.length() != 16) {
