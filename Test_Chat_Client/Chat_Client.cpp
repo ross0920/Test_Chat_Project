@@ -329,7 +329,7 @@ struct Audio_Context {
 	chat_client* c;
 };
 
-void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
+void draw_error_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position, std::string msg);
 void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
 void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
 template<typename Func>
@@ -353,7 +353,8 @@ enum client_state {
 	awaiting_authentication = 5,
 	authenticated = 6,
 	receiving_request = 7,
-	bad_version = 8
+	bad_version = 8,
+	no_open_room = 9
 };
 
 
@@ -1190,6 +1191,12 @@ private:
 				std::string error_message = std::string(m.body(), m.body_length());
 				std::cout << error_message << "\n";
 				state = client_state::bad_version;
+				break;
+			}
+			case message_type::no_open_room: {
+				std::string error_message = std::string(m.body(), m.body_length());
+				state = client_state::no_open_room;
+				break;
 			}
 			default:
 			{ break; }
@@ -1314,7 +1321,7 @@ private:
 		char subject_name[256];
 		X509* cert = X509_STORE_CTX_get_current_cert(ctx.native_handle());
 		X509_NAME_oneline(X509_get_subject_name(cert), subject_name, 256);
-		std::cout << "verifying " << subject_name << "\n";
+		//std::cout << "verifying " << subject_name << "\n";
 		return preverified;
 	}
 	void handshake() {
@@ -1370,7 +1377,7 @@ private:
 					std::cout << "decode_header faifl\n";
 					mic_test = false;
 					me.vc_state = voice_chat_state::none;
-					if (state != client_state::bad_version) {
+					if (state != client_state::bad_version && state != client_state::no_open_room) {
 						state = client_state::awaiting_connection;
 					}
 					/*if (udp_socket && udp_socket->is_open()) {
@@ -1581,7 +1588,7 @@ private:
 		init_capture();
 		init_playback();
 		audio_ctx.mix_buffer.resize(frame_size * playback_device.playback.channels);
-		std::cout << "mixbuffer size = " << audio_ctx.mix_buffer.size() << "\n";
+		//std::cout << "mixbuffer size = " << audio_ctx.mix_buffer.size() << "\n";
 		audio_ctx.temp_buffer.resize(frame_size * playback_device.playback.channels);
 		audio_ctx.bytes_per_sample = ma_get_bytes_per_sample(playback_device.playback.format);
 		audio_ctx.bytes_per_frame = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
@@ -1604,7 +1611,7 @@ static void glfw_error_callback(int error, const char* description)
 }
 void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	//MARKER1
-	std::cout << "start draw menu\n";
+	//std::cout << "start draw menu\n";
 	if (ImGui::BeginMenuBar())
 	{
 		if (ImGui::BeginMenu("Options"))
@@ -1698,7 +1705,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			}
 			ImGui::EndMenu();
 		}
-		std::cout << "end draw menu\n";
+		//std::cout << "end draw menu\n";
 	}
 	ImGui::EndMenuBar();
 }
@@ -1711,7 +1718,7 @@ int screenHeight;
 bool participant_header_enabled = false;
 
 void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
-	std::cout << "draw chat window\n";
+	//std::cout << "draw chat window\n";
 	ImVec2 display = ImGui::GetIO().DisplaySize;
 	ImVec2 size(display.x, display.y);
 	ImVec2 position((display.x - size.x) * 0.5f,
@@ -1730,7 +1737,11 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		ImGuiWindowFlags_MenuBar;
 
 	if (c->state == client_state::bad_version) {
-		draw_bad_version_window(c, window, size, position);
+		draw_error_window(c, window, size, position, "unsupported client version. update at magoogan.duckdns.org");
+		return;
+	}
+	if (c->state == client_state::no_open_room) {
+		draw_error_window(c, window, size, position, "no open rooms. try again later.");
 		return;
 	}
 	if (c->state == client_state::awaiting_connection || c->state == client_state::connecting || !authenticated) {
@@ -1782,14 +1793,18 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 
 	ImGui::PopStyleColor();
 	draw_menu_bar(c, window);
-	ImGui::SetCursorPos(ImVec2(size.x * 0.04f, size.y * 0.95f));
-	ImGui::SetNextItemWidth(size.x * 0.7f);
+	ImGui::SetCursorPos(ImVec2(size.x * 0.01f, size.y * 0.9f));
+	ImGui::SetNextItemWidth(size.x * 0.8f);
 	std::string text;
+
 	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
+	//if (first_enter)
 	{
+	//	std::cout << "set focus 0\n";
 		ImGui::SetKeyboardFocusHere(0);
 	}
 	//can't get focus back to this once lose it??
+	//std::cout << "focus\n";
 	if (ImGui::InputText("##Input Text", &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
 		chat_message msg;
 		msg.body_length(text.length());
@@ -1798,14 +1813,15 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		msg.encode_header();
 		c->write_ssl(msg);
 		text.clear();
-		was_focused = true;
+		//was_focused = true;
 	}
 	if (was_focused) {
+		//std::cout << "set focus -1\n";
 		ImGui::SetKeyboardFocusHere(-1);
 		was_focused = false;
 	}
-	ImGui::SetCursorPos(ImVec2(size.x * 0.01f, size.y * 0.05f));
-	ImGui::BeginChild("Output Text", ImVec2(size.x * 0.98f, size.y * 0.98f), ImGuiChildFlags_Borders);
+	ImGui::SetCursorPos(ImVec2(size.x * 0.01f, size.y * 0.06f));
+	ImGui::BeginChild("Output Text", ImVec2(size.x * 0.8f, size.y * 0.8f), ImGuiChildFlags_Borders);
 	for (const auto& m : msg_history) {
 		ImGui::TextWrapped("%s", m.c_str());
 	}
@@ -1815,7 +1831,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	}
 	ImGui::EndChild();
 
-	ImGui::SetCursorPos(ImVec2(size.x * 0.75f, size.y * 0.12f));
+	ImGui::SetCursorPos(ImVec2(size.x * 0.82f, size.y * 0.06f));
 
 	ImGuiWindowFlags scroll_flags = 0;
 	scroll_flags |= ImGuiWindowFlags_NoTitleBar;
@@ -1852,7 +1868,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	ImGui::EndChild();
 
 	ImGui::End();
-	std::cout << "draw chat window end\n";
+	//std::cout << "draw chat window end\n";
 
 	/*static bool no_resize = false;
 	static bool no_move = true;
@@ -2044,7 +2060,7 @@ void enter_name_window(std::shared_ptr<chat_client>& c) {
 	}
 	ImGui::End();
 }
-void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position) {
+void draw_error_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position, std::string msg) {
 	static bool no_resize = true;
 	static bool no_move = true;
 	static bool no_titlebar = true;
@@ -2054,10 +2070,10 @@ void draw_bad_version_window(std::shared_ptr<chat_client>& c, GLFWwindow* window
 	if (no_move)            window_flags |= ImGuiWindowFlags_NoMove;
 	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
-	ImGui::Begin("Bad_Version", NULL, window_flags);
+	ImGui::Begin("Error", NULL, window_flags);
 	//draw_menu_bar(c, window);
 	ImGui::SetCursorPos(ImVec2(size.x * 0.17f, size.y * 0.5f));
-	std::string text = "Client out of date - get latest version at magoogan.duckdns.org";
+	std::string text = msg;
 	ImGui::Text(text.c_str());
 	ImGui::End();
 }
@@ -2754,7 +2770,7 @@ int init_capture_device_test(ma_device& device_, ma_context& ma_context_, Audio_
 		if (selected_capture >= capture_count) { 
 			std::cout << "selected_capture >= capture count\n";
 			return -1; }
-		std::cout << "selecting " << capture_devices[selected_capture].name << "\n";
+		//std::cout << "selecting " << capture_devices[selected_capture].name << "\n";
 	}
 	deviceConfigCapture = ma_device_config_init(ma_device_type_capture);
 	deviceConfigCapture.capture.format = ma_format_f32;
@@ -3455,10 +3471,10 @@ int main(int argc, char* argv[])
 	//screenHeight = mode->height;
 	const std::string cert_leaf = "isrg_cert.pem";
 	std::filesystem::path cert_path = std::filesystem::current_path();
-	std::cout << "working directory: " << cert_path << "\n";
+	//std::cout << "working directory: " << cert_path << "\n";
 	cert_path.append(cert_leaf);
 	std::string pem = cert_path.string();
-	std::cout << "pem = " << pem << "\n";
+	//std::cout << "pem = " << pem << "\n";
 
 	msg_history.reserve(100);
 	glfwSetErrorCallback(glfw_error_callback);

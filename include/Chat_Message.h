@@ -39,7 +39,8 @@ enum class message_type : uint8_t {
 	heartbeat = 30,
 	leave = 31,
 	version_check = 32,
-	bad_message = 33
+	no_open_room = 33,
+	bad_message = 34
 };
 
 class chat_message {

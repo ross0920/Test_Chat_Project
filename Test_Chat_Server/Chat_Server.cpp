@@ -325,10 +325,23 @@ public:
 		}
 		return false;
 	}
-	void join(chat_participant_ptr participant) {
+	void send_room_full_notice() {
+		chat_message m;
+		std::string c = "no open rooms\n";
+		std::memcpy(m.body(), c.c_str(), c.length());
+		m.body_length(c.length());
+		m.set_message_type(message_type::no_open_room);
+		m.encode_header();
+		deliver(m);
+	}
+	bool join(chat_participant_ptr participant) {
 		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " join room\n";
-		if (duplicate_id(participant->id) || participant_map.size() >= max_participants) {
-			return; }
+		if (duplicate_id(participant->id)) {
+			return true;
+		}			
+		if(participant_map.size() >= max_participants) {
+			send_room_full_notice();
+			return false; }
 		participant->id = generate_id();
 		std::cout << "generate_id -> " << static_cast<int>(participant->id) << "\n";
 		participant_map.insert(std::make_pair(
@@ -344,6 +357,7 @@ public:
 		for (auto msg : recent_msgs_) {
 			participant->deliver(msg);
 		}
+		return true;
 	}
 	void send_vc_leave_notification(chat_participant_ptr participant) {
 		uint8_t vc_room_id = participant->get_vc_room_id();
@@ -1336,6 +1350,14 @@ private:
 		validation.encode_header();
 		deliver(validation);
 	}
+	void do_shutdown(chat_session& obj, std::shared_ptr<chat_session> self) {
+		obj.ssl_socket_.async_shutdown(
+			[self](const boost::system::error_code& ec) {
+				auto& obj = *self;
+				boost::system::error_code ignored;
+				obj.ssl_socket_.lowest_layer().close(ignored);
+			});
+	}
 	void do_handshake() {
 		//std::cout << "do_handshake()\n";
 		auto self(shared_from_this());
@@ -1407,13 +1429,14 @@ private:
 						if (!obj.version_validated) {
 							obj.version_validated = obj.verify_version(obj.read_msg_);
 							if (!obj.version_validated) {
-								obj.ssl_socket_.async_shutdown(
+								/*obj.ssl_socket_.async_shutdown(
 									[self](const boost::system::error_code& ec) {
 										auto& obj = *self;
 										boost::system::error_code ignored;
 										obj.ssl_socket_.lowest_layer().close(ignored);
 									}
-								);
+								);*/
+								self->do_shutdown(obj, self);
 							}
 						}
 						if (obj.verify_authorization_response(obj.read_msg_)) {
@@ -1468,8 +1491,12 @@ private:
 							obj.change_name(name);
 							//std::cout << "name changed\n";
 							//this->id = id;
-							obj.room_->join(obj.shared_from_this());
-							obj.room_->update_client_participants();
+							if (!obj.room_->join(obj.shared_from_this())) {
+								obj.do_shutdown(obj, self);
+							}
+							else {
+								obj.room_->update_client_participants();
+							}
 						}
 						break;
 					}
