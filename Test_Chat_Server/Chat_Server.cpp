@@ -46,7 +46,7 @@ const std::string key = "basic_password_authorization:D";
 const uint8_t key_length = 30;
 const std::string current_version = "1.0";
 const uint8_t current_version_length = 3;
-const uint8_t max_participants = 16;
+const uint8_t max_participants = 1;
 const uint8_t max_name_length = 16;
 //typedef std::shared_ptr<chat_participant> chat_participant_ptr;
 typedef std::shared_ptr<voice_chat_participant> vc_participant_ptr;

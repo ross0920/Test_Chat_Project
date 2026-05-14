@@ -87,6 +87,7 @@ const std::string port = "5000";
 
 const size_t max_playback_size = 3840;
 const int buffer_size = 38400; //19200;
+const float db_threshold = 0.5f;
 
 ma_device_info* capture_devices;
 ma_uint32 capture_count = 0;
@@ -214,13 +215,23 @@ private:
 	float noise_floor;
 	std::chrono::steady_clock::time_point last_update;
 };
-class gain_processing {
+class sound_control {
 	//MARKER2
 public:
 	void apply_gain(float* dst, const float* src, size_t count, float gain) {
 		for (size_t i = 0; i < count; ++i) {
-			dst[i] = src[i] * gain;
+			float sample = src[i] * gain;
+			if (sample > db_threshold) {
+				sample = db_threshold;
+			}
+			if (sample < -db_threshold) {
+				sample = -db_threshold;
+			}
+			dst[i] = sample;
 		}
+	}
+	void output_volume(float* dst, const float* src, size_t count, float gain) {
+
 	}
 };
 
@@ -292,7 +303,7 @@ struct Audio_Context {
 		encoder{ nullptr }, decoder{ nullptr },
 		hp_filter{},
 		lp_filter{},
-		gain_processing{},
+		sound_controls{},
 		c{c_}
 	{
 		if (c == nullptr) { std::cout << "audio context c = nullptr\n"; }
@@ -310,7 +321,7 @@ struct Audio_Context {
 
 	HighPassFilter hp_filter;
 	BiquadFilter lp_filter;
-	gain_processing gain_processing;
+	sound_control sound_controls;
 	ma_uint32 silence_frames;
 	ma_uint32 fade_index;
 	const ma_uint32 fade_duration;
@@ -1695,7 +1706,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					c->refresh_devices();
 				}
 				if (ImGui::BeginMenu("Controls")) {
-					ImGui::SliderFloat("##Gain", & gain, 0.0f, 100.0f, "Mic Gain: %.0f");
+					ImGui::SliderFloat("##Gain", & gain, 0.0f, 1.0f, "Mic Gain: %.001f");
 					ImGui::EndMenu();
 				}
 				ImGui::EndMenu();
@@ -1863,6 +1874,9 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			c->write_ssl(msg);
 			iter->second.ps = participant_state::sending_vc_request;
 		}
+		if (iter->second.enable_vc.first == 1) {
+			ImGui::SliderFloat("vol", &iter->second.output_volume, 0.0f, 1.0f, "%.001f");
+		}
 		ImGui::PopID();
 	}
 	ImGui::EndChild();
@@ -1870,165 +1884,6 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	ImGui::End();
 	//std::cout << "draw chat window end\n";
 
-	/*static bool no_resize = false;
-	static bool no_move = true;
-	static bool no_titlebar = true;
-	static bool no_menu = false;
-	static bool no_inputs = change_name;
-
-	ImGuiWindowFlags window_flags = 0;
-	if (no_resize)          window_flags |= ImGuiWindowFlags_NoResize;
-	if (no_move)            window_flags |= ImGuiWindowFlags_NoMove;
-	if (no_titlebar)        window_flags |= ImGuiWindowFlags_NoTitleBar;
-	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
-	ImGuiWindowFlags input_flags =
-		ImGuiWindowFlags_NoDecoration |
-		ImGuiWindowFlags_NoResize |
-		ImGuiWindowFlags_NoMove;
-
-	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-	std::cout << "main viewport.x " << main_viewport->Size.x << " main viewport.y " << main_viewport->Size.y << "\n";
-	//std::cout << "c.state = " << c.state << "\n";
-	if (c->state == client_state::bad_version) {
-		draw_bad_version_window(c, window);
-		return;
-	}
-	if (c->state == client_state::awaiting_connection || c->state == client_state::connecting || !authenticated) {		
-		draw_disconnect_window(c, window);
-		return;
-	}
-	if (c->state == client_state::ready || c->state == client_state::awaiting_authentication) {
-		draw_start_connection_window(c, window);
-		return;
-	}
-	if (ImGui::IsMouseClicked(0)) {
-		first_enter = false;
-	}
-	//std::cout << "change_name = " << change_name << "awaiting_change_response = " << awaiting_change_response << "\n";
-	if (change_name && !awaiting_change_response) {
-		//std::cout << "change name\n";
-		ImGui::SetNextWindowPos(main_viewport->Pos);
-		ImGui::SetNextWindowSize(main_viewport->Size);
-		ImGui::Begin("Name", NULL, window_flags);
-		draw_menu_bar(c, window);
-		ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.5f - 100.0f, main_viewport->Size.y * 0.5f));
-		ImGui::SetNextItemWidth(200);
-		std::string text;
-		static std::string hint;
-		hint = "Enter name";
-		if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
-		{
-			ImGui::SetKeyboardFocusHere(0);
-		}
-		if (ImGui::InputTextWithHint("##Name", hint.c_str(), &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
-			chat_message msg;
-			uint8_t id = c->me.id;
-			msg.body_length(sizeof(id) + text.size());
-			msg.set_message_type(message_type::name_change_request);
-			std::memcpy(msg.body(), &id, sizeof(uint8_t));
-			std::memcpy(msg.body() + sizeof(uint8_t), text.c_str(), text.size());
-			msg.encode_header();
-			c->write_ssl(msg);
-			hint = "";
-			awaiting_change_response = true;
-			text.clear();
-		}
-
-		ImGui::End();
-		return;
-	}
-	//if(awaiting_change_response)//render the windows but don't allow interaction until approval response
-		window_flags |= ImGuiWindowFlags_NoMouseInputs | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoBringToFrontOnFocus;
-	ImGuiIO io = ImGui::GetIO();
-	float monitor_width = io.DisplaySize.x;
-	float monitor_height = io.DisplaySize.y;
-	int w, h;
-	glfwGetWindowSize(window, &w, &h);
-	ImVec2 window_size = ImVec2(w, h);
-	ImGui::SetNextWindowPos(main_viewport->Pos);
-	ImGui::SetNextWindowSize(window_size);
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-	ImGui::Begin("Main_Window", NULL, window_flags);
-	ImGui::PopStyleVar();
-	//ImGui::SetCursorPos(ImVec2(main_viewport->Size.x, main_viewport->Size.y));
-	draw_menu_bar(c, window);
-	//ImGui::SetCursorPos(ImVec2(10, main_viewport->Size.y - 90.0f));
-	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x * 0.01f, main_viewport->Size.y));
-	ImGui::SetNextItemWidth(main_viewport->Size.x * 0.7f);
-	std::string text;
-	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0) && first_enter)
-	{
-		ImGui::SetKeyboardFocusHere(0);
-	}
-	if (ImGui::InputText("##Input Text", &text, ImGuiInputTextFlags_EnterReturnsTrue)) {
-		chat_message msg;
-		msg.body_length(text.length());
-		msg.set_message_type(message_type::chat);
-		std::memcpy(msg.body(), text.c_str(), msg.body_length());
-		msg.encode_header();
-		//std::cout << "sending msg: " << msg.data() << "\n";
-		c->write_ssl(msg);
-		text.clear();
-		was_focused = true;
-	}
-	if (was_focused) {
-		ImGui::SetKeyboardFocusHere(-1);
-		was_focused = false;
-	}*/
-	/*ImGui::SetCursorPos(ImVec2(10, 40));
-	ImGui::BeginChild("Output Text", ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiChildFlags_Borders);
-	for (const auto& m : msg_history) {
-		//ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 200);
-		//ImGui::TextUnformatted("%s", m.c_str());
-		//ImGui::PopTextWrapPos();
-		ImGui::TextWrapped("%s", m.c_str());
-	}
-	if (msg_rcvd) {
-		ImGui::SetScrollHereY(0.999f);
-		msg_rcvd = false;
-	}
-	ImGui::EndChild();
-	ImGui::SetCursorPos(ImVec2(main_viewport->Size.x , main_viewport->Size.y));
-
-	ImGuiWindowFlags scroll_flags = 0;
-	scroll_flags |= ImGuiWindowFlags_NoTitleBar;
-	scroll_flags |= ImGuiWindowFlags_NoMove;
-	scroll_flags |= ImGuiWindowFlags_NoResize;
-	scroll_flags |= ImGuiWindowFlags_NoCollapse;
-	scroll_flags |= ImGuiWindowFlags_HorizontalScrollbar;
-
-	ImGui::BeginChild("ChildL", ImVec2(main_viewport->Size.x, main_viewport->Size.y), ImGuiChildFlags_None, scroll_flags);
-	ImGui::Text("Room");
-	ImGui::Separator();	
-	std::unordered_map<uint8_t, participant_client_data>::iterator iter = c->participant_client_map.begin();
-	for (; iter != c->participant_client_map.end(); ++iter) {
-		//ImGui::Text(c.participant_names[i].c_str());
-		ImGui::PushID(iter->second.p.id);
-		//std::string participant_name_label = std::string(iter->second.p.name) + "##participant_" + std::to_string(iter->second.p.id);
-		std::string participant_name_label = std::string(iter->second.p.name); //+ "#" + std::to_string(iter->second.p.id);
-		ImGui::Text(participant_name_label.c_str());
-		ImGui::SameLine();
-		if (ImGui::Checkbox("", &iter->second.enable_vc.first)) {
-			//if (iter->second.enable_vc.first) {
-				//std::cout << "sending vc request\n";
-				chat_message msg;
-				uint8_t sender_id = c->me.id;
-				uint8_t receiver_id = iter->second.p.id;
-				uint8_t enable_vc = iter->second.enable_vc.first ? 1 : 0;
-				//std::cout << "Send request sender_id[" << static_cast<int>(sender_id) << "] receiver_id[" << static_cast<int>(receiver_id) << "]\n";
-				msg.body_length(sizeof(sender_id) + sizeof(receiver_id) + sizeof(enable_vc));
-				msg.set_message_type(message_type::vc_status_check);
-				std::memcpy(msg.body(), &sender_id, 1);
-				std::memcpy(msg.body() + 1, &receiver_id, 1);
-				std::memcpy(msg.body() + 2, &enable_vc, 1);
-				msg.encode_header();
-				c->write_ssl(msg);//TODO
-				iter->second.ps = participant_state::sending_vc_request;
-		}
-		ImGui::PopID();
-	}
-	ImGui::EndChild();
-	ImGui::End();*/
 }
 void enter_name_window(std::shared_ptr<chat_client>& c) {
 	static bool no_resize = true;
@@ -2370,6 +2225,7 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 
 	ma_result result;
 	auto iter = ctx->vc_streams.begin();
+	ctx->c->audio_ctx.bytes_per_frame;
 	//std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
 	for (; iter != ctx->vc_streams.end(); ++iter) {
 		//std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
@@ -2383,8 +2239,15 @@ void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pF
 		}
 		float* in = (float*)p_in;
 		ma_uint32 samples_read = frames_to_read * channels;
+		float vol;
+		if (ctx->c->participant_client_map.find(iter->first) != ctx->c->participant_client_map.end()) {
+			vol = ctx->c->participant_client_map.at(iter->first).output_volume;
+		}
+		else {
+			vol = 1.0f;
+		}
 		for (ma_uint32 i = 0; i < samples_read; i++) {
-			ctx->mix_buffer[i] += in[i];
+			ctx->mix_buffer[i] += in[i] * vol;
 		}
 		ma_pcm_rb_commit_read(&stream.playback_rb, frames_to_read);
 	}
@@ -2500,7 +2363,7 @@ void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFr
 		
 		const float sample_count = framesToWrite * pDevice->capture.channels;
 		std::vector<float> out(sample_count);
-		ctx->gain_processing.apply_gain(out.data(), in, sample_count, powf(10.0f, (gain * 0.1f) / 20.0f));
+		ctx->sound_controls.apply_gain(out.data(), in, sample_count, powf(10.0f, gain * 0.45f));
 		
 		std::memcpy(pMappedBuffer, out.data(), sizeInBytes);
 		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
@@ -2548,7 +2411,7 @@ void capture_callback_test_old(ma_device* pDevice, void* pFramesOut, const void*
 		const void* in = (((ma_uint8*)((const float*)pFramesIn)) + (framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels)));
 
 		float out[4000];
-		ctx->gain_processing.apply_gain(out, (float*)in, framesToWrite * pDevice->capture.channels, gain);
+		ctx->sound_controls.apply_gain(out, (float*)in, framesToWrite * pDevice->capture.channels, gain);
 
 		std::memcpy(pMappedBuffer, in, sizeInBytes);
 		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));

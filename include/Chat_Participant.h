@@ -141,11 +141,13 @@ public:
 		p = obj.p;
 		ps = obj.ps;
 		enable_vc = obj.enable_vc;
+		output_volume = 1.0f;
 	}
 	chat_participant p;
 	participant_state ps;
 	std::pair<bool, bool> enable_vc;//my value for them //their value for me //if both are 1 then vc is enabled. this is 
 	//double checked on server.
+	float output_volume;
 };
 struct participant_container {
 	participant_container() : name{ "empty" }, vc_state{ 0 }
