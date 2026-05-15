@@ -1938,8 +1938,9 @@ void draw_error_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVe
 	if (!no_menu)           window_flags |= ImGuiWindowFlags_MenuBar;
 	ImGui::Begin("Error", NULL, window_flags);
 	//draw_menu_bar(c, window);
-	ImGui::SetCursorPos(ImVec2(size.x * 0.17f, size.y * 0.5f));
 	std::string text = msg;
+	ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+	ImGui::SetCursorPos(ImVec2((size.x - text_size.x)*0.5f, (size.y - text_size.y) * 0.5f));
 	ImGui::Text(text.c_str());
 	ImGui::End();
 }

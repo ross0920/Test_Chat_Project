@@ -325,15 +325,6 @@ public:
 		}
 		return false;
 	}
-	void send_room_full_notice() {
-		chat_message m;
-		std::string c = "no open rooms\n";
-		std::memcpy(m.body(), c.c_str(), c.length());
-		m.body_length(c.length());
-		m.set_message_type(message_type::no_open_room);
-		m.encode_header();
-		deliver(m);
-	}
 	bool join(chat_participant_ptr participant) {
 		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " join room\n";
 		if (duplicate_id(participant->id)) {
@@ -1081,6 +1072,15 @@ public:
 		//do_read_header(); 
 		do_read_header_ssl();
 	}
+	void send_room_full_notice() {
+		chat_message m;
+		std::string c = "no open rooms\n";
+		std::memcpy(m.body(), c.c_str(), c.length());
+		m.body_length(c.length());
+		m.set_message_type(message_type::no_open_room);
+		m.encode_header();
+		deliver(m);
+	}
 
 	void start_ssl() {
 		do_handshake();
@@ -1472,7 +1472,7 @@ private:
 					case(message_type::start_room_request): {
 						if (obj.room_->participant_map.size() >= max_participants) {
 							std::cout << "room full! name = " << obj.name << "\n";
-							obj.room_->send_room_full_notice();
+							obj.send_room_full_notice();
 							obj.stop_heartbeat();
 						}
 						if (obj.authenticated) {
