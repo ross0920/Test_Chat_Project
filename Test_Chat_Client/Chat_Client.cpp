@@ -1120,6 +1120,7 @@ private:
 				change_name = false;
 				first_enter = true;
 				awaiting_change_response = false;
+				prompt_for_name = false;
 				break;
 			case message_type::particpants_request:
 				add_participants(m);
@@ -1779,7 +1780,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		first_enter = false;
 	}
 	//std::cout << "change_name = " << change_name << "awaiting_change_response = " << awaiting_change_response << "\n";
-	if (change_name && !awaiting_change_response || !has_name) {
+	if (change_name && !awaiting_change_response) {
 		//std::cout << "change name\n";
 		ImGui::SetNextWindowPos(position);
 		ImGui::SetNextWindowSize(size);
@@ -1815,6 +1816,11 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	ImGui::Begin("Main_Window", nullptr, flags);
 
 	ImGui::PopStyleColor();
+	if (!has_name) {
+		ImGui::End();
+		return;
+	}
+
 	draw_menu_bar(c, window);
 	ImGui::SetCursorPos(ImVec2(size.x * 0.01f, size.y * 0.9f));
 	ImGui::SetNextItemWidth(size.x * 0.8f);
