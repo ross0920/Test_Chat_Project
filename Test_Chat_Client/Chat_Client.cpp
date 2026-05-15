@@ -80,7 +80,7 @@ constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
 constexpr float sample_rate = 48000.0f;
 constexpr ma_uint32 frame_size = 960;
-const std::string client_version = "1.0";
+const std::string client_version = "3.0";
 const std::string ip = "159.89.49.248";
 const std::string port = "5000";
 
@@ -1399,6 +1399,7 @@ private:
 					std::cout << "decode_header faifl\n";
 					mic_test = false;
 					me.vc_state = voice_chat_state::none;
+					std::cout << "state = " << state << "\n";
 					if (state != client_state::bad_version && state != client_state::no_open_room) {
 						state = client_state::awaiting_connection;
 					}
@@ -1757,7 +1758,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		ImGuiWindowFlags_NoBringToFrontOnFocus |
 		ImGuiWindowFlags_NoNav |
 		ImGuiWindowFlags_MenuBar;
-
+	std::cout << "c->state = " << c->state << "\n";
 	if (c->state == client_state::bad_version) {
 		draw_error_window(c, window, size, position, "unsupported client version. update at magoogan.duckdns.org");
 		return;

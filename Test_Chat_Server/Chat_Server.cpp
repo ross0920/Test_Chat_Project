@@ -1022,7 +1022,8 @@ public:
 		vc_requestor_ids{},
 		vc_enabled{0},
 		heartbeat_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
-		disconnect_timer{std::make_shared<boost::asio::steady_timer>(io_context)}
+		disconnect_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
+		shutdown_timer{ std::make_shared<boost::asio::steady_timer>(io_context)}
 	{
 	}
 	void update_vc_partner_id(uint8_t receiver_id, std::pair<uint8_t,uint8_t> p) {
@@ -1435,7 +1436,9 @@ private:
 										obj.ssl_socket_.lowest_layer().close(ignored);
 									}
 								);*/
-								self->do_shutdown(obj, self);
+								self->start_shutdown();
+								//self->do_shutdown(obj, self);
+								return;
 							}
 						}
 						if (obj.verify_authorization_response(obj.read_msg_)) {
@@ -1772,6 +1775,14 @@ private:
 	void stop_heartbeat() {
 		heartbeat_timer->cancel();
 	}
+	void start_shutdown() {
+		auto self = shared_from_this();
+		auto timer = shutdown_timer;
+		shutdown_timer->expires_after(boost::asio::chrono::seconds(10));
+		shutdown_timer->async_wait([self, timer](const boost::system::error_code& ec) {
+			self->do_shutdown(*self, self);
+			});
+	}
 	void reset_disconnect(chat_message& m) {
 		disconnect_timer->expires_after(std::chrono::seconds(60));
 	}
@@ -1811,7 +1822,7 @@ private:
 	uint8_t vc_room_id;
 	std::shared_ptr<boost::asio::steady_timer> heartbeat_timer;
 	std::shared_ptr<boost::asio::steady_timer> disconnect_timer;
-	
+	std::shared_ptr<boost::asio::steady_timer> shutdown_timer;
 };
 class chat_server {
 public:
