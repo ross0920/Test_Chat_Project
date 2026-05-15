@@ -338,10 +338,8 @@ public:
 		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " join room\n";
 		if (duplicate_id(participant->id)) {
 			return true;
-		}			
-		if(participant_map.size() >= max_participants) {
-			send_room_full_notice();
-			return false; }
+		}		
+		std::cout << "participant_map.size() = " << participant_map.size() << "\n";
 		participant->id = generate_id();
 		std::cout << "generate_id -> " << static_cast<int>(participant->id) << "\n";
 		participant_map.insert(std::make_pair(
@@ -455,6 +453,7 @@ public:
 		participant->set_vc_enabled(0);
 		participant_map.erase(participant->id);
 		participant->id = 0;//3/26/26
+		
 	}
 	void deliver(const chat_message& msg) {
 		recent_msgs_.push_back(msg);
@@ -1467,8 +1466,15 @@ private:
 							}
 							break;
 						}*/
-	
+					case(message_type::no_open_room): {
+						obj.do_shutdown(obj, self);
+					}
 					case(message_type::start_room_request): {
+						if (obj.room_->participant_map.size() >= max_participants) {
+							std::cout << "room full! name = " << obj.name << "\n";
+							obj.room_->send_room_full_notice();
+							obj.stop_heartbeat();
+						}
 						if (obj.authenticated) {
 							if (obj.room_->check_room_full()) {
 								obj.reject();
@@ -1491,12 +1497,8 @@ private:
 							obj.change_name(name);
 							//std::cout << "name changed\n";
 							//this->id = id;
-							if (!obj.room_->join(obj.shared_from_this())) {
-								obj.do_shutdown(obj, self);
-							}
-							else {
-								obj.room_->update_client_participants();
-							}
+							obj.room_->join(obj.shared_from_this());
+							obj.room_->update_client_participants();
 						}
 						break;
 					}
@@ -1767,6 +1769,9 @@ private:
 			self->heartbeat_ping(ec, timer); 
 			});
 	}
+	void stop_heartbeat() {
+		heartbeat_timer->cancel();
+	}
 	void reset_disconnect(chat_message& m) {
 		disconnect_timer->expires_after(std::chrono::seconds(60));
 	}
@@ -1774,6 +1779,9 @@ private:
 		std::shared_ptr<boost::asio::steady_timer> t) {
 		if (e == boost::asio::error::operation_aborted) { return; }
 		std::cout << "disconnect trigger\n";
+		auto self = shared_from_this();
+		auto& obj = *self;
+		do_shutdown(obj, self);
 		room_->leave(shared_from_this());
 	}
 	void start_disconnect_timer() {
@@ -1803,6 +1811,7 @@ private:
 	uint8_t vc_room_id;
 	std::shared_ptr<boost::asio::steady_timer> heartbeat_timer;
 	std::shared_ptr<boost::asio::steady_timer> disconnect_timer;
+	
 };
 class chat_server {
 public:

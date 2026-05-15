@@ -808,6 +808,7 @@ private:
 		return token;
 	}
 	void send_start_room_request() {
+		std::cout << "start room request!!!!!\n";
 		chat_message msg;
 		std::string text = "enter room";
 		msg.body_length(text.length());
@@ -1092,6 +1093,15 @@ private:
 		msg.encode_header();
 		write_ssl(msg);
 	}
+	void ok_shutdown(chat_message& m) {
+		chat_message msg;
+		msg.set_message_type(message_type::no_open_room);
+		std::memcpy(m.body(), &me.id, 1);
+		msg.body_length(sizeof(me.id));
+		msg.encode_header();
+		write_ssl(msg);
+
+	}
 	void process_msg_type(chat_message& m) {
 		switch (m.msg_type) {
 			case message_type::chat:
@@ -1207,6 +1217,7 @@ private:
 			case message_type::no_open_room: {
 				std::string error_message = std::string(m.body(), m.body_length());
 				state = client_state::no_open_room;
+
 				break;
 			}
 			default:
