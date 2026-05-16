@@ -221,12 +221,12 @@ public:
 	void apply_gain(float* dst, const float* src, size_t count, float gain) {
 		for (size_t i = 0; i < count; ++i) {
 			float sample = src[i] * gain;
-			if (sample > db_threshold) {
+			/*if (sample > db_threshold) {
 				sample = db_threshold;
 			}
 			if (sample < -db_threshold) {
 				sample = -db_threshold;
-			}
+			}*/
 			dst[i] = sample;
 		}
 	}
@@ -294,7 +294,8 @@ public:
 		ma_pcm_rb_uninit(&playback_rb);
 	}
 };
-struct Audio_Context {
+class Audio_Context {
+public:
 	Audio_Context(size_t frame_size, float sample_rate, chat_client* c_) : speaking{ false },
 		current_gain{ 1.0f }, gain{ 20.0f }, noise_profile{ frame_size },
 		silence_frames{ 0 }, hangover_duration{ 10 }, fading_out{ false },
@@ -308,9 +309,25 @@ struct Audio_Context {
 	{
 		if (c == nullptr) { std::cout << "audio context c = nullptr\n"; }
 		else { std::cout << "audio context not nullptr\n"; }
-		//ma_rb_init(packet_size * packet_count, nullptr, nullptr, &ring_buffer);
 	}
 	~Audio_Context() { std::cerr << "Audio Context destructor called\n"; }
+	void initialize_encoder(ma_device& capture_device) {
+		int err = 0;
+		encoder = opus_encoder_create(
+			48000,
+			capture_device.capture.channels,
+			OPUS_APPLICATION_VOIP,
+			&err
+		);
+		if (err != OPUS_OK) {
+			std::cerr << "opus encoder creation error: " << err << "\n";
+		}
+		opus_encoder_ctl(encoder, OPUS_SET_BITRATE(32000));
+		opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(5));
+		opus_encoder_ctl(encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+		opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
+		opus_encoder_ctl(encoder, OPUS_SET_DTX(0)); 
+	}
 	bool shutting_down = false;
 	bool speaking;
 	bool fading_out;
@@ -318,7 +335,6 @@ struct Audio_Context {
 	float gain;
 	NoiseProfile noise_profile;
 	//SpectralSuppressor spectral_suppressor;
-
 	HighPassFilter hp_filter;
 	BiquadFilter lp_filter;
 	sound_control sound_controls;
@@ -1612,15 +1628,10 @@ private:
 		init_capture();
 		init_playback();
 		audio_ctx.mix_buffer.resize(frame_size * playback_device.playback.channels);
-		//std::cout << "mixbuffer size = " << audio_ctx.mix_buffer.size() << "\n";
 		audio_ctx.temp_buffer.resize(frame_size * playback_device.playback.channels);
 		audio_ctx.bytes_per_sample = ma_get_bytes_per_sample(playback_device.playback.format);
 		audio_ctx.bytes_per_frame = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
-		//audio_ctx.vc_streams.insert(std::make_pair(0, rbs(capture_device, playback_device)));
-		//std::cout << "vc_stream count = " << audio_ctx.vc_streams.size() << "\n";
-		//init_capture_rb();
-		//init_playback_rb();
-		//do_connect(endpoints);
+		audio_ctx.initialize_encoder(capture_device);
 		do_connect_ssl_test(endpoints);
 		session_token = "";
 		auto client_ep = udp_socket->local_endpoint();
@@ -1742,14 +1753,17 @@ int screenHeight;
 bool participant_header_enabled = false;
 
 void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
+	ImGuiViewport* viewport = ImGui::GetMainViewport();
 	//std::cout << "draw chat window\n";
 	ImVec2 display = ImGui::GetIO().DisplaySize;
 	ImVec2 size(display.x, display.y);
 	ImVec2 position((display.x - size.x) * 0.5f,
 		(display.y - size.y) * 0.5f);
-
+	ImGui::GetIO().FontGlobalScale = display.y * .0025f;
 	ImGui::SetNextWindowPos(position);
 	ImGui::SetNextWindowSize(size);
+	//ImGui::SetNextWindowPos(viewport->Pos);
+	//ImGui::SetNextWindowSize(viewport->Size);
 
 	ImGuiWindowFlags flags = 
 		ImGuiWindowFlags_NoDecoration |
@@ -2379,12 +2393,23 @@ void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFr
 		}
 		//std::cout << "framesToWrite = " << framesToWrite << "\n";
 		const float* in = ((const float*)pFramesIn) + (framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
-		
+		//const float* in = ((const float*)pFramesIn) + (framesWritten * pDevice->capture.channels);
+
 		const float sample_count = framesToWrite * pDevice->capture.channels;
 		std::vector<float> out(sample_count);
 		ctx->sound_controls.apply_gain(out.data(), in, sample_count, powf(10.0f, gain * 0.45f));
 		
+		unsigned char encoded[4000];
+		/*int encoded_bytes = opus_encode_float(
+			ctx->encoder,
+			out.data(),
+			frame_size,
+			encoded,
+			sizeof(encoded)
+		);*/
+
 		std::memcpy(pMappedBuffer, out.data(), sizeInBytes);
+		//std::memcpy(pMappedBuffer, encoded, encoded_bytes);
 		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
 
 		if (result != MA_SUCCESS) {
@@ -2395,55 +2420,6 @@ void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFr
 		//std::cout << "END frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
 	}
 }
-void capture_callback_test_old(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
-	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
-
-	ma_result result;
-	ma_uint32 framesWritten;
-	(void)pFramesOut;
-	framesWritten = 0;
-
-	while (framesWritten < frameCount && ctx->c->running_capture_) {
-		//std::cout << "START frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
-		void* pMappedBuffer;
-		ma_uint32 framesToWrite = frameCount - framesWritten;
-		size_t sizeInBytes;
-		if (&ctx->ring_buffer == NULL) {
-			std::cerr << "NULL rb\n";
-			break;
-		}
-		sizeInBytes = framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels);
-		result = ma_rb_acquire_write(&ctx->ring_buffer, &sizeInBytes, &pMappedBuffer);
-		//std::cout << "sizeInBytes after acquire = " << sizeInBytes << "\n";
-		if (result != MA_SUCCESS) {
-			std::cerr << "acquire_write fail " << " size = " << sizeInBytes << "\n";
-			break;
-		}
-		framesToWrite = (ma_uint32)(sizeInBytes / ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
-
-		if (framesToWrite == 0) {
-			//std::cerr << "framesToWrite == 0\n";
-			break;
-		}
-		//std::cout << "framesToWrite = " << framesToWrite << "\n";
-		ma_uint32 written_bytes = framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels);
-		const void* in = (((ma_uint8*)((const float*)pFramesIn)) + (framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels)));
-
-		float out[4000];
-		ctx->sound_controls.apply_gain(out, (float*)in, framesToWrite * pDevice->capture.channels, gain);
-
-		std::memcpy(pMappedBuffer, in, sizeInBytes);
-		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
-
-		if (result != MA_SUCCESS) {
-			std::cout << "commit write fails\n";
-			break;
-		}
-		framesWritten += framesToWrite;
-		//std::cout << "END frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
-	}
-}
-
 void playback_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
 	auto* ctx = static_cast<Audio_Context*>(device->pUserData);
 	if (ctx->c->session_token.length() != 16) {
