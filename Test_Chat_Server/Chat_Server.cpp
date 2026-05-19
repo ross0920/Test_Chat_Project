@@ -241,9 +241,9 @@ public:
 						//std::cout << "write to client [" << iter->second->id << "][" << iter->second->name << "] fail\n";
 					}
 					else {
-						//std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
-							//<< " write to client size [" << size << "]\n\t" 
-							//<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";
+						std::cout << "write to client [" << static_cast<int>(iter->second->id) << "][" << iter->second->name << "] @ port " 
+							<< " write to client size [" << size << "]\n\t" 
+							<< iter->second->get_client_udp_endpoint()->port() << " ip " << iter->second->get_client_udp_endpoint()->address() << " success\n";
 					}
 				}
 			);
@@ -313,6 +313,7 @@ public:
 		if (participant_map.find(recv_vc_msg_->sender_id) == participant_map.end()) { 
 			std::cout << "sender id not found\n";
 			return false; }
+		std::cout << "route_udp to sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
 		participant_map.at(recv_vc_msg_->sender_id)->write_vc_msg_to_rb(recv_vc_msg_);
 		return true;
 	}
@@ -1125,20 +1126,20 @@ public:
 	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
 		//std::cout << "write_vc_msg_to_rb()\n";
 		if (vc_partner_ids.size() == 0) { 
-			//std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
+			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
 			return; }
 		void* pwrite_void = nullptr;
 		size_t size = recv_vc_msg_->body_length();
 		size_t requested = size;
-		//std::cout << "size = " << size << "\n";
+		std::cout << "size = " << size << "\n";
 		size_t total_written = 0;
 		ma_result result;
 		uint8_t* data = (uint8_t*)recv_vc_msg_->body();
 		while (requested > 0) {
 			size = requested;
-			//std::cout << "write size request = " << size << "\n";
+			std::cout << "write size request = " << size << "\n";
 			result = ma_rb_acquire_write(&vc_rb, &size, &pwrite_void);
-			//std::cout << "actual write size = " << size << "\n";
+			std::cout << "actual write size = " << size << "\n";
 			if (result != MA_SUCCESS || size == 0) {
 				std::cerr << "fail server write acquire size = " << size << "\n";
 				break;
@@ -1170,7 +1171,7 @@ public:
 	void send_message_to_playback(std::shared_ptr<voice_chat_message> recv_vc_msg_, uint8_t& sender_id) {
 		auto self = shared_from_this();
 		auto iter = vc_partner_ids.begin();
-		//std::cout << "recv_vc_msg->sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
+		std::cout << "recv_vc_msg->sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
 		for (; iter != vc_partner_ids.end(); ++iter) {
 			auto msg_copy = std::make_shared<voice_chat_message>(*recv_vc_msg_);
 			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
@@ -1187,9 +1188,9 @@ public:
 					}
 					else {
 						//std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
-						//	<< " to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
-							//<< " write to client size [" << size << "]\n\t" 
-							//<< ep->port() << " ip " << ep->address() << " success\n";
+						std::cout << "write to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
+							<< " write to client size [" << size << "]\n\t" 
+							<< ep->port() << " ip " << ep->address() << " success\n";
 					}	
 				}
 			);

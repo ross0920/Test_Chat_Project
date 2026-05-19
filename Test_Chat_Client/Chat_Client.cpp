@@ -67,6 +67,8 @@ static bool change_name = false;
 static bool first_enter = true;
 static bool server_ping = false;
 static bool awaiting_change_response = false; //account for delay between client msg and server response
+static bool capture_device_change = false;
+static bool playback_device_change = false;
 static float dots = 0;
 static float ping_timer = 0;
 static float ping_interval = 3;
@@ -104,9 +106,16 @@ std::vector<std::string> playback_devices_names_storage{};
 bool mic_test = false;
 
 const int  udp_port_number = 0;
-
 class chat_client;
 class SpectralSuppressor;
+void draw_error_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position, std::string msg);
+void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
+void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
+template<typename Func>
+void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_client>& c);
+void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount);
+void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount);
+
 class HighPassFilter {
 public:
 	void set(float sample_rate, float cutoffHz) {
@@ -233,6 +242,29 @@ public:
 	void output_volume(float* dst, const float* src, size_t count, float gain) {
 
 	}
+	void apply_gain_and_upmix(float* dst, const float* src, size_t frame_count, float gain,
+		uint32_t in_channels, uint32_t out_channels) {
+		//std::cout << "in_channels = " << in_channels << " out_channels = " << out_channels << "\n";
+		for (size_t f = 0; f < frame_count; ++f) {
+			const float* in_frame = src + f * in_channels;
+
+			float mono_value = in_frame[0] * gain;
+
+			float* out_frame = dst + f * out_channels;
+
+			if (in_channels == 1) {
+				for (uint32_t c = 0; c < out_channels; ++c) {
+					out_frame[c] = mono_value;
+				}
+			}
+			else {
+				for (uint32_t c = 0; c < out_channels; ++c) {
+					float s = in_frame[c % in_channels] * gain;
+					out_frame[c] = s;
+				}
+			}
+		}
+	}
 };
 
 class rbs {
@@ -243,21 +275,23 @@ public:
 	ma_uint32 bytes_per_frame;
 	ma_uint32 bytes_per_sample;
 	size_t size;
+	ma_format network_format;
+	ma_uint32 network_channels;
 
-	rbs(ma_device& capture_device, ma_device& playback_device) : size{} {
+	rbs(ma_device& capture_device, ma_device& playback_device, ma_format network_format, ma_uint32 network_channels) : size{},
+	network_format{network_format}, network_channels{network_channels}
+	{
 		init_capture_rb(capture_device);
 		init_playback_rb(playback_device);
 		bytes_per_frame = ma_get_bytes_per_frame(playback_rb.format,playback_rb.channels);
 		bytes_per_sample = ma_get_bytes_per_sample(playback_rb.format);
-
 	}
-
 
 	bool init_capture_rb(ma_device& capture_device) {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
 		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
-		bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
+		bpf = ma_get_bytes_per_frame(network_format, network_channels);
 
 		//std::cout << "capture rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
 		ma_result result;
@@ -276,12 +310,12 @@ public:
 
 		std::cout << "playback rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
 		ma_result result;
-		result = ma_pcm_rb_init(playback_device.playback.format, playback_device.playback.channels, subBufferSizeInFrames,
+		result = ma_pcm_rb_init(network_format, network_channels, subBufferSizeInFrames,
 			NULL, NULL, &playback_rb);
 		//result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &playback_rb);
 		if (result != MA_SUCCESS) {
 			std::cout << "Failed to initialize playback ring buffer\n";
-			return -1;
+			return false;
 		}
 		return true;
 	}
@@ -305,13 +339,38 @@ public:
 		hp_filter{},
 		lp_filter{},
 		sound_controls{},
-		c{c_}
+		c{c_},
+		capture_temp_buffer{},
+		playback_temp_buffer{},
+		network_format{ma_format_f32},
+		network_channels{1}
 	{
 		if (c == nullptr) { std::cout << "audio context c = nullptr\n"; }
 		else { std::cout << "audio context not nullptr\n"; }
 	}
 	~Audio_Context() { std::cerr << "Audio Context destructor called\n"; }
-	void initialize_encoder(ma_device& capture_device) {
+	void init() {
+		init_capture_context();
+		init_playback_context();
+		init_capture();
+		init_playback();
+		std::cout << "playback format = " << playback_device.playback.format << "\n";
+		std::cout << "capture format = " << capture_device.capture.format << "\n";
+		std::cout << "playback channels = " << playback_device.playback.channels << "\n";
+		std::cout << "capture channels = " << capture_device.capture.channels << "\n";
+		if (!playback_init || !capture_init) { return; }
+		mix_buffer.resize(frame_size * playback_device.playback.channels);
+		std::cout << "frame_size = " << frame_size << " channels = " << playback_device.playback.channels << "\n";
+		playback_temp_buffer.resize(frame_size * playback_device.playback.channels);
+		std::cout << "temp_buffer size = " << playback_temp_buffer.size() << "\n";
+		capture_temp_buffer.resize(frame_size * playback_device.playback.channels);
+		//bytes_per_sample_playback = ma_get_bytes_per_sample(playback_device.playback.format);
+		//bytes_per_frame_playback = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
+		bytes_per_sample_playback = ma_get_bytes_per_sample(network_format);
+		bytes_per_frame_playback = ma_get_bytes_per_frame(network_format, network_channels);
+
+	}
+	void initialize_encoder() {
 		int err = 0;
 		encoder = opus_encoder_create(
 			48000,
@@ -327,6 +386,233 @@ public:
 		opus_encoder_ctl(encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
 		opus_encoder_ctl(encoder, OPUS_SET_VBR(1));
 		opus_encoder_ctl(encoder, OPUS_SET_DTX(0)); 
+	}
+	int start_device(ma_device& device) {
+		if (ma_device_start(&device) != MA_SUCCESS) {
+			std::cerr << "Failed to start audio device\n";
+			return -1;
+		}
+	}
+	int stop_device(ma_device& device) {
+		if (ma_device_stop(&device) != MA_SUCCESS) {
+			std::cerr << "Failed to stop audio device\n";
+			return -1;
+		}
+	}
+	int init_playback_context() {
+		ma_result result;
+		result = ma_context_init(NULL, 0, NULL, &playback_context);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize capture context\n";
+			return -1;
+		}
+	}
+	int init_playback() {
+		playback_init = true;
+		ma_result result;
+		ma_device_config deviceConfigPlayback;
+		//ma_device_info* playback_devices;
+		//ma_uint32 playback_count;
+		result = ma_context_get_devices(&playback_context, &playback_devices, &playback_count, NULL, NULL);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to get capture devices\n";
+			return -1;
+		}
+		playback_devices_names.clear();
+		playback_devices_names_storage.clear();
+		for (ma_uint32 i = 0; i < playback_count; i++) {
+			//std::cout << i << ": " << playback_devices[i].name << "\n";
+			playback_devices_names_storage.emplace_back(playback_devices[i].name);
+			playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
+		}
+		if (playback_count > 0) {
+			if (selected_playback >= playback_count) {
+				std::cout << "selected_playback >= playback_count\n";
+				return -1;
+			}
+			//std::cout << "selecting " << playback_devices[selected_playback].name << "\n";
+		}
+		deviceConfigPlayback = ma_device_config_init(ma_device_type_playback);
+		deviceConfigPlayback.playback.format = network_format;
+		deviceConfigPlayback.playback.pDeviceID = &playback_devices[selected_playback].id;
+		deviceConfigPlayback.dataCallback = playback_callback;
+		//deviceConfigPlayback.pUserData = &ma_context_;
+		deviceConfigPlayback.pUserData = this;
+
+		result = ma_device_init(NULL, &deviceConfigPlayback, &playback_device);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize playback device\n";
+			return -1;
+		}
+	}
+
+	void start_playback() {
+		running_playback = true;
+		if (start_device(playback_device) == -1) {
+			return;
+		}
+	}
+	void stop_playback() {
+		running_playback = false;
+		boost::system::error_code ec;
+		stop_device(playback_device);
+	}
+	void uninit_playback() {
+		std::cout << "uninit playback_device\n";
+		stop_playback();
+		ma_device_uninit(&playback_device);
+		playback_init = false;
+	}
+	int init_capture_context() {
+		ma_result result;
+		result = ma_context_init(NULL, 0, NULL, &capture_context);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize capture context\n";
+			return -1;
+		}
+	}
+	int init_capture() {
+		capture_init = true;
+		ma_result result;
+		ma_device_config deviceConfigCapture;
+		result = ma_context_get_devices(&capture_context, NULL, NULL, &capture_devices, &capture_count);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to get capture device\n";
+			return -1;
+		}
+		capture_devices_names.clear();
+		capture_devices_names_storage.clear();
+		for (ma_uint32 i = 0; i < capture_count; i++) {
+			//std::cout << i << ": " << capture_devices[i].name << "\n";
+			capture_devices_names_storage.emplace_back(capture_devices[i].name);
+			capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
+		}
+		if (capture_count > 0) {
+			if (selected_capture >= capture_count) {
+				std::cout << "selected_capture >= capture count\n";
+				return -1;
+			}
+			//std::cout << "selecting " << capture_devices[selected_capture].name << "\n";
+		}
+		deviceConfigCapture = ma_device_config_init(ma_device_type_capture);
+		deviceConfigCapture.capture.format = network_format;
+		deviceConfigCapture.capture.pDeviceID = &capture_devices[selected_capture].id;
+		deviceConfigCapture.dataCallback = capture_callback;
+		//deviceConfigCapture.pUserData = &ma_context_;
+		deviceConfigCapture.pUserData = this;
+
+		result = ma_device_init(NULL, &deviceConfigCapture, &capture_device);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize capture device\n";
+			return -1;
+		}
+	}
+	void start_capture() {
+		running_capture = true;
+		if (start_device(capture_device) == -1) {
+			return;
+		}
+	}
+	void stop_capture() {
+		running_capture = false;
+		boost::system::error_code ec;
+		stop_device(capture_device);
+	}
+	void uninit_capture() {
+		std::cout << "uninit_capture()\n";
+		std::cout << "ma_device_uninit\n";
+		ma_device_uninit(&capture_device);
+		std::cout << "ma_device_uninit end\n";
+
+		capture_init = false;
+	}
+	void restart_capture() {
+		bool was_running_capture_ = running_capture;
+		if (running_capture) {
+			stop_capture();
+		}
+		uninit_capture();
+		init_capture();
+		reinit_vc_streams();
+		if (was_running_capture_) {
+			start_capture();
+		}
+	}
+	void restart_playback() {
+		bool was_running_playback_ = running_playback;
+		if (running_playback) {
+			stop_playback();
+		}
+		uninit_playback();
+		init_playback();
+		reinit_vc_streams();
+		if (was_running_playback_) {
+			start_playback();
+		}
+	}
+	bool init_capture_rb() {
+		ma_uint32 bpf;
+		ma_uint32 subBufferSizeInFrames;
+		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
+		bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
+
+		//std::cout << "capture rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
+		ma_result result;
+		//result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &capture_ctx.ring_buffer);
+		result = ma_pcm_rb_init(network_format, network_channels, subBufferSizeInFrames, NULL, NULL, &capture_ring_buffer);
+		if (result != MA_SUCCESS) {
+			std::cout << "Failed to initialize capture ring buffer\n";
+			return false;
+		}
+		return true;
+	}
+	void reinit_vc_streams() {
+		std::cout << "reinit_vc_streams\n";
+		auto iter = vc_streams.begin();
+		for (; iter != vc_streams.end(); ++iter) {
+			iter->second.uninit_capture_rb();
+			iter->second.uninit_playback_rb();
+			iter->second.init_capture_rb(capture_device);
+			iter->second.init_playback_rb(playback_device);
+		}
+		std::cout << "end reinit_vc_streams\n";
+	}
+	void uninit_vc_streams() {
+		auto iter = vc_streams.begin();
+		for (; iter != vc_streams.end(); ++iter) {
+			iter->second.uninit_capture_rb();
+			iter->second.uninit_playback_rb();
+		}
+	}
+	void add_stream(chat_message& m) {
+		uint8_t partner_id = 0;
+		std::memcpy(&partner_id, m.body() + 1, 1);
+		vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device, network_format, network_channels)));
+		std::cout << "add_stream for partner_id[" << static_cast<int>(partner_id) << "]\n";
+	}
+	void refresh_devices() {
+		refresh_playback_device_list();
+		refresh_capture_device_list();
+	}
+	void refresh_capture_device_list() {
+		ma_context_get_devices(&capture_context, NULL, NULL, &capture_devices, &capture_count);
+		capture_devices_names.clear();
+		capture_devices_names_storage.clear();
+		for (ma_uint32 i = 0; i < capture_count; i++) {
+			//std::cout << i << ": " << capture_devices[i].name << "\n";
+			capture_devices_names_storage.emplace_back(capture_devices[i].name);
+			capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
+		}
+	}
+	void refresh_playback_device_list() {
+		ma_context_get_devices(&playback_context, &playback_devices, &playback_count, NULL, NULL);
+		playback_devices_names.clear();
+		playback_devices_names_storage.clear();
+		for (ma_uint32 i = 0; i < playback_count; i++) {
+			//std::cout << i << ": " << playback_devices[i].name << "\n";
+			playback_devices_names_storage.emplace_back(playback_devices[i].name);
+			playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
+		}
 	}
 	bool shutting_down = false;
 	bool speaking;
@@ -345,33 +631,33 @@ public:
 	float rms_smoothed;
 	OpusEncoder* encoder;
 	OpusDecoder* decoder;
-	ma_rb ring_buffer;
+	//ma_rb ring_buffer;
+	ma_pcm_rb capture_ring_buffer;
 	std::unordered_map<uint8_t, rbs> vc_streams;
 	float input_float[frame_size]{};
 	uint8_t packet[4096]{};
 	std::vector<float>mix_buffer;
-	std::vector<float>temp_buffer;
-	ma_uint32 bytes_per_sample;
-	ma_uint32 bytes_per_frame;
+	std::vector<float>playback_temp_buffer;
+	std::vector<float>capture_temp_buffer;
+	ma_uint32 bytes_per_sample_playback;
+	ma_uint32 bytes_per_frame_playback;
+	ma_uint32 bytes_per_sample_capture;
+	ma_uint32 bytes_per_frame_capture;
 	chat_client* c;
+	ma_device playback_device;
+	ma_context playback_context;
+	ma_device capture_device;
+	ma_context capture_context;
+	ma_format network_format;
+	ma_uint32 network_channels;
+
+	bool capture_init = false;
+	bool playback_init = false;
+	bool running_capture{ false };
+	bool running_playback{ false };
+
 };
 
-void draw_error_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position, std::string msg);
-void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
-void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position);
-template<typename Func>
-void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_client>& c);
-int start_mic(ma_device& device);
-int init_capture_device_test(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx);
-int init_playback_device_test(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx);
-int init_capture_device(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx);
-int init_playback_device(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx);
-int start_device(ma_device& device);
-int stop_device(ma_device& device);
-void refresh_playback_device_list(ma_context& ma_context_);
-void refresh_capture_device_list(ma_context& ma_context_);
-int init_capture_context(ma_context& ma_context_);
-int init_playback_context(ma_context& ma_context_);
 enum client_state {
 	ready = 1,
 	awaiting_connection = 2,
@@ -383,8 +669,6 @@ enum client_state {
 	bad_version = 8,
 	no_open_room = 9
 };
-
-
 
 struct client_vc_room {
 	client_vc_room() : ids{} {}
@@ -421,106 +705,13 @@ public:
 	std::string server_ip;
 	bool voice_enabled = false;
 	boost::asio::ip::udp::endpoint server_endpoint;
-	Audio_Context playback_ctx;
-	Audio_Context capture_ctx;
+	//Audio_Context playback_ctx;
+	//Audio_Context capture_ctx;
 	Audio_Context audio_ctx;
+	boost::asio::io_context& io_context_;
 	std::string session_token;//16 bytes/chars
-	bool capture_init = false;
-	bool playback_init = false;
-	bool running_capture_{ false };
-	bool running_playback_{ false };
+	std::shared_ptr<boost::asio::steady_timer> send_timer_;
 
-	void reinit_vc_streams() {
-		auto iter = audio_ctx.vc_streams.begin();
-		for (; iter != audio_ctx.vc_streams.end(); ++iter) {
-			iter->second.uninit_capture_rb();
-			iter->second.uninit_playback_rb();
-			iter->second.init_capture_rb(capture_device);
-			iter->second.init_playback_rb(playback_device);
-		}
-	}
-
-	void uninit_vc_streams() {
-		auto iter = audio_ctx.vc_streams.begin();
-		for (; iter != audio_ctx.vc_streams.end(); ++iter) {
-			iter->second.uninit_capture_rb();
-			iter->second.uninit_playback_rb();
-		}
-	}
-
-	void start_capture_device() {
-		running_capture_ = true;
-		if (start_device(capture_device) == -1) {
-			return;
-		}
-	}
-	void start_playback_device() {
-		running_playback_ = true;
-		if (start_device(playback_device) == -1) {
-			return;
-		}
-	}
-	void start_capture() {
-		running_capture_ = true;
-		if (start_device(capture_device) == -1) {
-			return;
-		}
-		auto self = shared_from_this();
-		check_and_send_test();
-	}
-	void stop_capture() {
-		running_capture_ = false;
-		boost::system::error_code ec;
-		stop_device(capture_device);
-	}
-	void start_playback() {
-		running_playback_ = true;
-		if (start_device(playback_device) == -1) {
-			return;
-		}
-		auto self = shared_from_this();
-		boost::asio::post(io_context_, [this,self] {
-			check_and_read_header_test();
-		});
-	}
-	void stop_playback() {
-		running_playback_ = false;
-		boost::system::error_code ec;
-		stop_device(playback_device);
-	}
-	void uninit_capture() {
-		ma_device_uninit(&capture_device);
-		capture_init = false;
-	}
-	void uninit_playback() {
-		std::cout << "uninit playback_device\n";
-		ma_device_uninit(&playback_device);
-		playback_init = false;
-	}
-	void init_capture() {
-		init_capture_device_test(capture_device, ma_capture_context, capture_ctx);
-		capture_init = true;
-	}
-	void init_playback() {
-		//init_playback_device_test(playback_device, ma_playback_context, playback_ctx);
-		init_playback_device_test(playback_device, ma_playback_context, audio_ctx);
-		playback_init = true;
-	}
-	bool init_capture_rb() {
-		ma_uint32 bpf;
-		ma_uint32 subBufferSizeInFrames;
-		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
-		bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
-
-		//std::cout << "capture rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
-		ma_result result;
-		result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &capture_ctx.ring_buffer);
-		if (result != MA_SUCCESS) {
-			std::cout << "Failed to initialize capture ring buffer\n";
-			return false;
-		}
-		return true;
-	}
 	/*bool init_playback_rb() {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
@@ -544,18 +735,8 @@ public:
 		std::cout << "uninit playback rb\n";
 		ma_rb_uninit(&playback_ctx.ring_buffer);
 	}*/
-	void refresh_devices() {
-		refresh_playback_devices();
-		refresh_capture_devices();
-	}
-	void refresh_capture_devices(){
-		refresh_capture_device_list(ma_capture_context);
-	}
-	void refresh_playback_devices(){
-		refresh_playback_device_list(ma_playback_context);
-	}
 	void check_close_socket() {
-		if (!running_capture_ && !running_playback_) {
+		if (!audio_ctx.running_capture && !audio_ctx.running_playback) {
 			boost::system::error_code ec;
 			udp_socket->close();
 		}
@@ -643,10 +824,82 @@ public:
 		//boost::asio::post(io_context_, [this]() {ssl_socket_->async_shutdown(); });
 		//boost::asio::post(io_context_, [this]() {udp_socket->close(); });
 	}
+	void schedule_check_and_send_test() {
+		auto self = shared_from_this();
+		boost::asio::post(io_context_, [self] {
+			self->send_timer_->expires_after(boost::asio::chrono::milliseconds(10));
+			auto timer_cpy = self->send_timer_;
+			self->send_timer_->async_wait([self, timer_cpy](const boost::system::error_code& ec) {
+				self->check_and_send_test();
+				});
+			}
+		);
 
+	}
+	void check_and_send_test() {
+		if (!audio_ctx.running_capture) { std::cout << "NOT RUNNING CAPTURE!\n"; return; }
+		//std::cout << "check_and_send_test start\n";
+		ma_result result;
+		//size_t size = buffer_size;
+		ma_uint32 frames_to_read = frame_size;
+		void* pOut;
+		//result = ma_rb_acquire_read(&capture_ctx.ring_buffer, &size, &pOut);
+		result = ma_pcm_rb_acquire_read(&audio_ctx.capture_ring_buffer, &frames_to_read, &pOut);
+		//std::cout << "check_and_send_test() acquire_read " << frames_to_read << "\n";
+		if (result == MA_SUCCESS && /*size*/ frames_to_read > 0) {
+			ma_uint32 bytes_per_frame = ma_get_bytes_per_frame(
+				audio_ctx.network_format,
+				audio_ctx.network_channels);
+			size_t bytes = frames_to_read * bytes_per_frame;
+			if (bytes > max_playback_size) {
+				bytes = max_playback_size;
+				frames_to_read = (ma_uint32)(bytes / bytes_per_frame);
+				bytes = frames_to_read * bytes_per_frame;
+			}
+			std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
+			//m->encode_header(session_token, size, vc_room_id, me.id);
+			m->encode_header(session_token, bytes, vc_room_id, me.id);
+			//std::memcpy(m->body(), pOut, size);
+			std::memcpy(m->body(), pOut, bytes);
+			auto buffer = boost::asio::buffer(m->data(), m->length());
+			auto self = shared_from_this();
+			udp_socket->async_send_to(buffer, server_endpoint,
+				[this, self, /*size*/frames_to_read](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
+					//std::cout << "async_send_to lambda start\n";
+					if (!ec) {
+						ma_pcm_rb_commit_read(&self->audio_ctx.capture_ring_buffer, frames_to_read);
+						std::cout << "async_send_to commit_read " << frames_to_read << "\n";
+					}
+					else {
+						std::cout << "error seding data to server\n";
+						//std::cout << "error sending capture_ctx.ring_buffer data of size " << size << " error[" << ec << "]\n";
+						udp_socket->close();
+					}
+					//boost::asio::post(io_context_, [this, self] {check_and_send();});
+					//std::cout << "async_send_to lambda end\n";
+				}
+			);
+			//std::cout << "check_and_send_test end\n";
+			return;
+		}
+		//std::cout << "schedule retry timer\n";
+		if (retry_read_capture_timer == nullptr) {
+			auto self = shared_from_this();
+			retry_read_capture_timer = std::make_shared<boost::asio::steady_timer>(io_context_);
+			retry_read_capture_timer->expires_after(std::chrono::milliseconds(2));
+			//	std::cout << "timer scheduled\n";
+			retry_read_capture_timer->async_wait([this, self](boost::system::error_code) {
+				//std::cout << "TIMER EXPIRED*****************%%%%\n";
+				retry_read_capture_timer = nullptr;
+				self->check_and_send_test();
+				}
+			);
+		}
+	}
 private:
 	void check_and_read_header_test(){
-		if (!running_playback_) { 
+		//std::cout << "check_and_read_header_test start\n";
+		if (!audio_ctx.running_playback) { 
 			std::cout << "!running_playback()\n";
 			return; }
 		auto self = shared_from_this();
@@ -654,7 +907,7 @@ private:
 		//std::cout << "async_receive_from port[" << server_endpoint.port() << "] ip[" << server_endpoint.address() << "]\n";
 		udp_socket->async_receive_from(boost::asio::buffer(read_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), server_endpoint,
 			[this, self, read_vc_msg_](boost::system::error_code ec, std::size_t bytes) {
-				//std::cout << "async_receive_from lambda body\n";
+				//std::cout << "async_receive_from lambda body start\n";
 				if (!ec) {
 					if (!read_vc_msg_->decode_header()) {
 						std::cout << "udp_socket->async_receive_from decode header fail\n";
@@ -669,9 +922,14 @@ private:
 					std::cout << "error: " << ec.message() << " close udp socket\n";
 					udp_socket->close();
 				}
+				//std::cout << "async_receive_from lambda body end\n";
+
 			});
+		//std::cout << "check_and_read_header_test end\n";
+
 	}
 	void check_and_read_body_test(std::shared_ptr<voice_chat_message> read_vc_msg_) {
+		//std::cout << "check_and_read_body_test start\n";
 		//MARKER2
 		ma_result result;
 		size_t requested = read_vc_msg_->body_length();
@@ -689,76 +947,32 @@ private:
 		}
 		//std::cout << "requested = " << requested << "\n";
 		while (requested > 0) {
-			ma_uint32 frames = requested / audio_ctx.bytes_per_frame;
+			ma_uint32 frames = requested / audio_ctx.bytes_per_frame_playback;
 			void* pOut;
 			//result = ma_rb_acquire_write(&playback_ctx.ring_buffer, &write_size, &pOut);
 			//result = ma_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &write_size, &pOut);
 			result = ma_pcm_rb_acquire_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, &frames, &pOut);
-			//std::cout << "acquire playback_ctx rb frames " << frames << "\n";
+			//std::cout << "check_and_read_body() acquire playback_rb frames " << frames << "\n";
 			if (result != MA_SUCCESS || frames == 0) {
 				//std::cerr << "fail playback write acquire frames = " << frames << " requested = " << requested <<
 					//" result = " << result << 
 					//"\n\t" << "rb_playback available = " << ma_pcm_rb_available_write(&audio_ctx.vc_streams.at(sender_id).playback_rb) << "\n";
 				break;
 			}
-			//std::cout << "write to rb_playback " << write_size << "\n";
-			size_t bytes_written = frames * audio_ctx.bytes_per_frame;
+			size_t bytes_written = frames * audio_ctx.bytes_per_frame_playback;
 			std::memcpy(pOut, data + total_written , bytes_written);
 			//ma_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, write_size);
 			ma_pcm_rb_commit_write(&audio_ctx.vc_streams.at(sender_id).playback_rb, frames);
+			//std::cout << "check_and_read_body() commit to playback_rb " << frames << "\n";
+
 			requested -= bytes_written;
 			//total_written += write_size;
 			total_written += bytes_written;
 		}
+		//std::cout << "check_and_read_body_test end\n";
+
 	}
 	std::shared_ptr<boost::asio::steady_timer> retry_read_capture_timer;
-	void check_and_send_test() {
-		if (!running_capture_) { std::cout << "NOT RUNNING CAPTURE!\n"; return; }
-		ma_result result;
-		size_t size = buffer_size;
-		void* pOut;
-		result = ma_rb_acquire_read(&capture_ctx.ring_buffer, &size, &pOut);
-		//std::cout << "**************CAPTURE_CTX RB ACQUIRE READ SIZE " << size << "\n";
-		if (result == MA_SUCCESS && size > 0) {
-			if (size > max_playback_size) { size = max_playback_size; }
-			std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
-			m->encode_header(session_token, size, vc_room_id, me.id);
-			std::memcpy(m->body(), pOut, size);
-			auto buffer = boost::asio::buffer(m->data(), m->length());
-			auto self = shared_from_this();
-
-			udp_socket->async_send_to(buffer, server_endpoint,
-				[this, self, size](boost::system::error_code ec, std::size_t bytes) {
-					//std::cout << "TRY SEND capture data to server\n";
-					if (!ec) {
-						//std::cout << "send from ep port[" << udp_socket->local_endpoint().port() << "] ip[" << udp_socket->local_endpoint().address() << "]\n";
-						//std::cout << "send capture_ctx.ring_buffer data of size " << size << "\n";
-						ma_rb_commit_read(&capture_ctx.ring_buffer, size);
-						check_and_send_test();
-					}
-					else {
-						//std::cout << "error sending capture_ctx.ring_buffer data of size " << size << " error[" << ec << "]\n";
-						udp_socket->close();
-					}
-					//boost::asio::post(io_context_, [this, self] {check_and_send();});
-				}
-			);
-			return;
-		}
-		//std::cout << "schedule retry timer\n";
-		if (retry_read_capture_timer == nullptr) {
-			auto self = shared_from_this();
-			retry_read_capture_timer = std::make_shared<boost::asio::steady_timer>(io_context_);
-			retry_read_capture_timer->expires_after(std::chrono::milliseconds(2));
-		//	std::cout << "timer scheduled\n";
-			retry_read_capture_timer->async_wait([this, self](boost::system::error_code) {
-				//std::cout << "TIMER EXPIRED*****************%%%%\n";
-				retry_read_capture_timer = nullptr;
-				check_and_send_test();
-				}
-			);
-		}
-	}
 	void add_participants(chat_message& m) {
 		auto iter = participant_client_map.find(me.id);
 		std::pair<bool, bool> enable_vc{};
@@ -836,17 +1050,6 @@ private:
 	}
 	void read_id(chat_message& m) {
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
-	}
-	void set_up_rb() {
-		//audio_ctx.vc_streams.insert(std::make_pair(me.id, rbs(capture_device, playback_device)));
-		std::cout << "vc_stream count = " << audio_ctx.vc_streams.size() << "\n";
-		init_capture_rb();
-	}
-	void add_stream(chat_message& m) {
-		uint8_t partner_id = 0;
-		std::memcpy(&partner_id, m.body() + 1, 1);
-		audio_ctx.vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device)));
-		std::cout << "add_stream for partner_id[" << static_cast<int>(partner_id) << "]\n";
 	}
 	void store_server_port(chat_message& m) {
 		/*uint8_t sender_id = 0;
@@ -1000,10 +1203,6 @@ private:
 		}
 		send_udp_port();
 	}
-	void start_vc(ma_device& device_) {
-		udp_socket->open(udp::v4());
-		start_mic(device_);
-	}
 	/*void end_vc_old(chat_message& m) {
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
@@ -1036,33 +1235,6 @@ private:
 		//uninit_capture_rb();
 	}*/
 	//not using this
-	void remove_sender_from_vc(chat_message& m) {
-		uint8_t sender_id;
-		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
-		if (sender_id == me.id) {
-			mic_test = false;
-			me.vc_state = voice_chat_state::none;
-			stop_playback();
-			stop_capture();
-			vc_room_id = 0;
-		}
-		else{
-			if (participant_map.find(sender_id) == participant_map.end()) { return; }
-			participant_client_map.at(sender_id).ps = participant_state::neutral;
-			participant_client_map.at(sender_id).p.vc_state = voice_chat_state::none;
-		}
-		if (vc_partner_ids.find(sender_id) != vc_partner_ids.end()) {
-			vc_partner_ids.erase(sender_id);
-		}
-		
-	}
-
-	void end_vc(chat_message& m) {
-		me.vc_state = voice_chat_state::none;
-		stop_playback();
-		stop_capture();
-	}
-
 	void remove_sender_from_chat(chat_message& m) {
 		uint8_t sender_id;
 		std::memcpy(&sender_id, m.body(), sizeof(sender_id));
@@ -1168,7 +1340,7 @@ private:
 				break;
 			case message_type::send_id:
 				read_id(m);
-				set_up_rb();
+				audio_ctx.init_capture_rb();
 				break;
 			case message_type::recieve_vc_request: 
 				receive_vc_request(m);
@@ -1184,8 +1356,9 @@ private:
 				std::string token = decode_session_token(m);
 				if (token == session_token) {
 					std::cout << "session token validated. start_capture and playback\n";
-					start_capture();
-					start_playback();
+					audio_ctx.start_capture();
+					audio_ctx.start_playback();
+					check_and_read_header_test();
 				}
 				break;
 			}
@@ -1201,23 +1374,22 @@ private:
 				start_mic_test(m);
 				break;
 			}
-			case message_type::end_vc: {
-				//remove_sender_from_vc(m);
-				end_vc(m);
-				break;
-			}
 			case message_type::end_chat: {
 				remove_sender_from_chat(m);
 				break;
 			}
 			case message_type::send_udp_port:{
-				add_stream(m);
+				std::cout << "receive send_udp_port\n";
+				audio_ctx.add_stream(m);
 				store_server_port(m);
 				send_udp_port();
+				std::cout << "end receive send_udp_port\n";
 				break;
 			}
 			case message_type::vc_partner_update: {
-				add_stream(m);
+				std::cout << "receive vc_partner_update\n";
+				audio_ctx.add_stream(m);
+				std::cout << "end receive vc_partner_update\n";
 				break;
 			}
 			case message_type::heartbeat: {
@@ -1585,7 +1757,6 @@ private:
 	}
 private:
 	GLFWwindow* window;
-	boost::asio::io_context& io_context_;
 	boost::asio::ssl::context& ssl_context_;
 	std::shared_ptr<tcp::socket> socket_;
 	std::unique_ptr <boost::asio::ssl::stream<tcp::socket>> ssl_socket_;//must come after socket_ and ssl_context_
@@ -1600,8 +1771,6 @@ private:
 	int max_delay = 32;
 	std::unique_ptr<boost::asio::steady_timer> timer_;
 	boost::asio::steady_timer udp_timer_;
-	ma_device capture_device;
-	ma_device playback_device;
 	ma_context ma_capture_context;
 	ma_context ma_playback_context;
 	std::array<uint8_t, 1500>recv_buffer_;
@@ -1613,9 +1782,9 @@ private:
 		: io_context_(io_context), ssl_context_(ssl_context), socket_(std::make_shared<tcp::socket>(io_context)),
 		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ udp_port_number))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
-		udp_timer_{ udp_socket->get_executor() }, capture_ctx{ Audio_Context(frame_size, sample_rate, this) }, playback_ctx{ Audio_Context(frame_size, sample_rate, this) }, 
+		udp_timer_{ udp_socket->get_executor() },
 		audio_ctx{frame_size, sample_rate, this},
-		me(), steady_timer_{io_context}
+		me(), steady_timer_{io_context}, send_timer_{std::make_shared<boost::asio::steady_timer>(io_context)}
 	{	
 
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
@@ -1623,15 +1792,8 @@ private:
 		ssl_socket_->set_verify_callback(
 			std::bind(&chat_client::verify_certificate, this, std::placeholders::_1, std::placeholders::_2));
 		me.id = 0;
-		init_capture_context(ma_capture_context);
-		init_playback_context(ma_playback_context);
-		init_capture();
-		init_playback();
-		audio_ctx.mix_buffer.resize(frame_size * playback_device.playback.channels);
-		audio_ctx.temp_buffer.resize(frame_size * playback_device.playback.channels);
-		audio_ctx.bytes_per_sample = ma_get_bytes_per_sample(playback_device.playback.format);
-		audio_ctx.bytes_per_frame = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
-		audio_ctx.initialize_encoder(capture_device);
+		audio_ctx.init();
+		audio_ctx.initialize_encoder();
 		do_connect_ssl_test(endpoints);
 		session_token = "";
 		auto client_ep = udp_socket->local_endpoint();
@@ -1640,13 +1802,115 @@ private:
 	}
 };
 //test
+void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
+	if (pDevice == nullptr) { return; }
+	//std::cout << "playback_callback_test() start\n";
+	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
+	const ma_uint32 channels = pDevice->playback.channels;
+	const ma_uint32 total_samples = frameCount * channels;
+	float* out = (float*)pFramesOut;
+	std::fill(ctx->mix_buffer.begin(), ctx->mix_buffer.end(), 0);
+	//std::fill(ctx->temp_buffer.begin(), ctx->temp_buffer.end(), 0);
+
+	ma_result result;
+	auto iter = ctx->vc_streams.begin();
+	ctx->bytes_per_frame_playback;
+	//std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
+	for (; iter != ctx->vc_streams.end(); ++iter) {
+		//std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
+		rbs& stream = iter->second;
+		ma_uint32 frames_to_read = frameCount;
+		void* p_in = nullptr;
+		ma_result result =
+			ma_pcm_rb_acquire_read(&iter->second.playback_rb, &frames_to_read, &p_in);
+		if (result != MA_SUCCESS || frames_to_read == 0) {
+			continue;
+		}
+		float* in = (float*)p_in;
+		ma_uint32 samples_read = frames_to_read * channels;
+		float vol;
+		if (ctx->c->participant_client_map.find(iter->first) != ctx->c->participant_client_map.end()) {
+			vol = ctx->c->participant_client_map.at(iter->first).output_volume;
+		}
+		else {
+			vol = 1.0f;
+		}
+
+		float* temp = ctx->playback_temp_buffer.data();
+
+		ctx->sound_controls.apply_gain_and_upmix(temp, in, frames_to_read, vol,
+			ctx->network_channels, pDevice->playback.channels);
+
+		for (uint32_t i = 0; i < samples_read; i++) {
+			ctx->mix_buffer[i] += temp[i];
+		}
+		//for (ma_uint32 i = 0; i < samples_read; i++) {
+			//ctx->mix_buffer[i] += in[i] * vol;
+			//float s = ctx->mix_buffer[i];
+			//ctx->mix_buffer[i] = s;
+		//}
+		ma_pcm_rb_commit_read(&stream.playback_rb, frames_to_read);
+	}
+	std::memcpy(out, ctx->mix_buffer.data(), total_samples * sizeof(float));
+	//std::cout << "playback_callback_test() end\n";
+}
+
+void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
+	if (pDevice == nullptr || pFramesIn == nullptr) { return; }
+	//std::cout << "capture_callback_test() start\n";
+	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
+
+	const uint32_t in_ch = pDevice->capture.channels;
+	const uint32_t out_ch = ctx->network_channels;
+
+	const float gain_db = std::pow(10.0f, gain * 0.45f);
+	const float* src = ((const float*)pFramesIn);
+	float* out = ctx->capture_temp_buffer.data();
+	ma_result result;
+	ma_uint32 framesWritten;
+	framesWritten = 0;
+
+	while (framesWritten < frameCount && ctx->running_capture) {
+		void* pMappedBuffer;
+		ma_uint32 framesToWrite = frameCount - framesWritten;
+		result = ma_pcm_rb_acquire_write(&ctx->capture_ring_buffer, &framesToWrite, &pMappedBuffer);
+		if (result != MA_SUCCESS || framesToWrite == 0) {
+			//std::cerr << "acquire_write fail " << " size = " << sizeInBytes << "\n";
+			break;
+		}
+		std::cout << framesWritten + framesToWrite << " <= " << frameCount << "\n";
+		std::cout << ctx->capture_temp_buffer.size() << " >= " << framesToWrite * out_ch << "\n";
+
+		ctx->sound_controls.apply_gain_and_upmix(
+			out,
+			src + framesWritten * in_ch,
+			framesToWrite,
+			gain_db,
+			in_ch,
+			out_ch
+		);
+		ma_uint32 playback_bpf = ma_get_bytes_per_frame(ctx->network_format, out_ch);
+		std::memcpy(pMappedBuffer, out, framesToWrite * playback_bpf);
+		result = ma_pcm_rb_commit_write(&ctx->capture_ring_buffer, framesToWrite);
+
+		framesWritten += framesToWrite;
+		if (result != MA_SUCCESS) {
+			//std::cout << "commit write fails\n";
+			break;
+		}
+		std::cout << "capture_callback write " << framesToWrite << "\n";
+		ctx->c->schedule_check_and_send_test();
+		//std::cout << "capture_callback_test() end\n";
+	}
+}
+
 static void glfw_error_callback(int error, const char* description)
 {
 	fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	//MARKER1
-	//std::cout << "start draw menu\n";
+	//std::cout << "draw_menu_bar start\n";
 	if (ImGui::BeginMenuBar())
 	{
 		if (ImGui::BeginMenu("Options"))
@@ -1683,14 +1947,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					ImGui::Combo(" ", &current_capture, capture_devices_names.data(), capture_devices_names.size());
 					if (current_capture != selected_capture) {
 						selected_capture = current_capture;
-						c->uninit_capture();
-						c->init_capture();
-						c->reinit_vc_streams();
-						//c->uninit_capture_rb();
-						//c->init_capture_rb();
-						if (c->running_capture_) {
-							c->start_capture_device();
-						}
+						c->audio_ctx.restart_capture();
 					}
 					//delete[] items;
 					ImGui::EndMenu();
@@ -1714,20 +1971,13 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					ImGui::Combo(" ", &current_playback, playback_devices_names.data(), playback_devices_names.size());
 					if (current_playback != selected_playback) {
 						selected_playback = current_playback;
-						c->uninit_playback();
-						c->init_playback();
-						c->reinit_vc_streams();
-						//c->uninit_playback_rb();
-						//c->init_playback_rb();
-						if (c->running_playback_) {
-							c->start_playback_device();
-						}
+						c->audio_ctx.restart_playback();
 					}
 					//delete[] items;
 					ImGui::EndMenu();
 				}
 				if (ImGui::Button("Refresh devices")) {
-					c->refresh_devices();
+					c->audio_ctx.refresh_devices();
 				}
 				if (ImGui::BeginMenu("Controls")) {
 					ImGui::SliderFloat("##Gain", & gain, 0.0f, 1.0f, "Mic Gain: %.001f");
@@ -1740,7 +1990,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			}
 			ImGui::EndMenu();
 		}
-		//std::cout << "end draw menu\n";
+		//std::cout << "draw_menu_bar end\n";
 	}
 	ImGui::EndMenuBar();
 }
@@ -1773,7 +2023,6 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		ImGuiWindowFlags_NoBringToFrontOnFocus |
 		ImGuiWindowFlags_NoNav |
 		ImGuiWindowFlags_MenuBar;
-	std::cout << "c->state = " << c->state << "\n";
 	if (c->state == client_state::bad_version) {
 		draw_error_window(c, window, size, position, "unsupported client version. update at magoogan.duckdns.org");
 		return;
@@ -2146,411 +2395,7 @@ void fade_out(ma_uint32 frame_count, Audio_Context* ctx, int16_t* out) {
 		}
 	}
 }
-void duplex_data_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
-	//MARKER1
-	auto* ctx = static_cast<Audio_Context*>(device->pUserData);
-	auto* in = static_cast<const int16_t*>(input);
-	auto* out = static_cast<int16_t*>(output);
-
-	float new_rms = compute_rms(in, frame_count);
-	ctx->rms_smoothed = 0.2f * ctx->rms_smoothed + 0.8f * new_rms;
-	//ctx->rms_smoothed = new_rms;
-	if (ctx->rms_smoothed > upper_threshold) {
-		ctx->silence_frames = 0;
-		ctx->fade_index = ctx->fade_duration;
-		ctx->fading_out = false;
-		ctx->speaking = true; 
-	}
-	else if (ctx->rms_smoothed < lower_threshold) {
-		ctx->silence_frames++;
-		if (ctx->silence_frames > 10) {
-			ctx->speaking = false;
-			if (ctx->fade_index > 0) {
-				ctx->fading_out = true;
-				ctx->fade_index--;
-			}
-			else {
-				ctx->fading_out = false;
-			}
-		}
-	}
-	float target_gain = ctx->speaking ? ctx->gain : 1.0f;
-	ctx->current_gain += (target_gain - ctx->current_gain) * 0.05f;
-	if (!ctx->speaking) {
-		ctx->noise_profile.update(in, frame_count);
-		if (!ctx->fading_out) {
-			std::memset(out, 0, frame_count * sizeof(int16_t));
-			return;
-		}
-	}
-	for (ma_uint32 i = 0; i < frame_count; ++i) {
-		float sample = static_cast<float>(in[i]);
-		//float cleaned = sample - ctx->noise_profile.get(i);
-		float cleaned = sample;
-		if (std::abs(cleaned) < 10.0f) {
-			cleaned = 0.0f;
-		}
-		cleaned *= ctx->current_gain;
-		if (std::abs(cleaned) < 10.0f) {
-			cleaned = 0.0f;
-		}
-		cleaned = ctx->hp_filter.process(cleaned);
-		cleaned = ctx->lp_filter.process(cleaned);
-		if (ctx->fading_out) {		
-			float fade = static_cast<float>(ctx->fade_index) / ctx->fade_duration;
-			cleaned *= fade;
-		}
-		out[i] = static_cast<int16_t>(std::clamp(cleaned, -32768.0f, 32767.0f));
-	}	
-	//assume my ring_buffer is initialized to hold 32KB
-	uint8_t encoded[4000];
-	float input_float[960];
-	for (ma_uint32 i = 0; i < frame_count; ++i)
-		input_float[i] = static_cast<float>(out[i]) / 32768.0f;
-
-	ma_result result;
-	int encoded_bytes = opus_encode_float(ctx->encoder, input_float, frame_count, encoded, sizeof(encoded));
-	uint16_t len = static_cast<uint16_t>(encoded_bytes);
-	const size_t header_size = sizeof(len);
-	size_t total = header_size + size_t(encoded_bytes);
-
-	void* pwrite_void = nullptr;
-	size_t write_size = total;
-	if (encoded_bytes <= 0) {
-		//dropped frames. opus error
-		return;
-	}
-	result = ma_rb_acquire_write(&ctx->ring_buffer, &write_size, &pwrite_void);
-	if (result != MA_SUCCESS || write_size < total) {
-		//dropped frames. call ma_rb_release()?
-		return;
-	}
-	uint8_t* pwrite = static_cast<uint8_t*>(pwrite_void);
-
-	std::memcpy(pwrite, &len, header_size);
-	std::memcpy(pwrite + header_size, encoded, size_t(encoded_bytes));
-
-	result = ma_rb_commit_write(&ctx->ring_buffer, total);
-
-	//TODO don't decode in callback anymore?
-	float decoded_buffer[(int)frame_size];
-	int decoded_frames = opus_decode_float(ctx->decoder, encoded, encoded_bytes, decoded_buffer, frame_count, 0);
-	if (decoded_frames < 0) { 
-		memset(out, 0, frame_count * sizeof(uint16_t));
-		return; }
-
-	for (int i = 0; i < decoded_frames; ++i) {
-		//out[i] = std::clamp(decoded_buffer[i], -1.0f, 1.0f);
-		float amplified = decoded_buffer[i] * 1.5f;
-		out[i] = static_cast<int16_t>(std::clamp(amplified * 32768.0f, -32768.0f, 32767.0f));
-	}
-
-	//memcpy(out, decoded_buffer, decoded_frames * sizeof(float));
-}
 //TODO add stream mixing
-void playback_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
-	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
-	const ma_uint32 channels = pDevice->playback.channels;
-	const ma_uint32 total_samples = frameCount * channels;
-	float* out = (float*)pFramesOut;
-	std::fill(ctx->mix_buffer.begin(), ctx->mix_buffer.end(), 0);
-	//std::fill(ctx->temp_buffer.begin(), ctx->temp_buffer.end(), 0);
-
-	ma_result result;
-	auto iter = ctx->vc_streams.begin();
-	ctx->c->audio_ctx.bytes_per_frame;
-	//std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
-	for (; iter != ctx->vc_streams.end(); ++iter) {
-		//std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
-		rbs& stream = iter->second;
-		ma_uint32 frames_to_read = frameCount;
-		void* p_in = nullptr;
-		ma_result result = 
-			ma_pcm_rb_acquire_read(&iter->second.playback_rb, &frames_to_read, &p_in);
-		if (result != MA_SUCCESS || frames_to_read == 0) {
-			continue;
-		}
-		float* in = (float*)p_in;
-		ma_uint32 samples_read = frames_to_read * channels;
-		float vol;
-		if (ctx->c->participant_client_map.find(iter->first) != ctx->c->participant_client_map.end()) {
-			vol = ctx->c->participant_client_map.at(iter->first).output_volume;
-		}
-		else {
-			vol = 1.0f;
-		}
-		for (ma_uint32 i = 0; i < samples_read; i++) {
-			ctx->mix_buffer[i] += in[i] * vol;
-		}
-		ma_pcm_rb_commit_read(&stream.playback_rb, frames_to_read);
-	}
-	std::memcpy(out, ctx->mix_buffer.data(), total_samples * sizeof(float));
-}
-/*void playback_callback_test_old(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
-	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
-	ma_result result;
-	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
-	std::cout << "frameCount = " << frameCount << "\n";
-	std::cout << "total_bytes playback = " << total_bytes << "\n";
-	size_t size = total_bytes;
-	size_t current_size = total_bytes;
-	size_t total_size = 0;
-	auto iter = ctx->vc_streams.begin();
-	std::cout << "vc_streams.count = " << ctx->vc_streams.size() << "\n";
-	//std::cout << "playback callback_test ??\n";
-	for (; iter != ctx->vc_streams.end(); ++iter) {
-		std::cout << "reading vc stream # " << static_cast<int>(iter->first) << "\n";
-		void* pOut;
-		size_t size = total_bytes;
-		result = ma_rb_acquire_read(&iter->second.playback_rb, &size, &pOut);
-		iter->second.size = size;
-		if (result != MA_SUCCESS || size == 0) {
-			std::cout << "playback rb available read space = " << ma_rb_available_read(&iter->second.playback_rb) << "\n";
-			std::cout << "playback rb available write space = " << ma_rb_available_write(&iter->second.playback_rb) << "\n";
-			std::cerr << "playback rb read fail: result = " << result << " size = " << iter->second.size << "\n";
-			continue;
-		}
-		std::memcpy((uint8_t*)pFramesOut + total_size, pOut, size);
-		ma_rb_commit_read(&iter->second.playback_rb, size);
-		total_size += size;
-		std::cout << "size = " << size << " total_size = " << total_size << "\n";
-	}
-	if (total_size < total_bytes) {
-		std::memset((uint8_t*)pFramesOut + total_size, 0, total_bytes - total_size);
-	}
-}*/
-/*void playback_callback_test_old(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
-	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
-	ma_result result;
-	ma_uint32 total_bytes = frameCount * ma_get_bytes_per_frame(pDevice->playback.format, pDevice->playback.channels);
-	//std::cout << "total_bytes playback = " << total_bytes << "\n";
-	size_t size = total_bytes;
-	size_t current_size = total_bytes;
-	size_t total_size = 0;
-	auto iter = ctx->vc_streams.begin();
-	int i = 0;
-	for (; iter != ctx->vc_streams.end(); ++iter) {
-		void* pOut;
-		size_t size = total_bytes;
-		result = ma_rb_acquire_read(&iter->second.playback_rb, &size, &pOut);
-		iter->second.size = size;
-		if (result != MA_SUCCESS || size == 0) {
-			//std::cout << "playback rb available read space = " << ma_rb_available_read(&ctx->ring_buffer) << "\n";
-			//std::cout << "playback rb available write space = " << ma_rb_available_write(&ctx->ring_buffer) << "\n";
-			//std::cerr << "playback rb read fail: result = " << result << " size = " << size << "\n";
-			continue;
-		}
-		total_size += size;
-		std::memcpy((uint8_t*)pFramesOut + i * size, pOut, size);
-	}
-	result = ma_rb_acquire_read(&ctx->ring_buffer, &size, &pOut);
-	if (result != MA_SUCCESS || size == 0) {
-		//std::cout << "playback rb available read space = " << ma_rb_available_read(&ctx->ring_buffer) << "\n";
-		//std::cout << "playback rb available write space = " << ma_rb_available_write(&ctx->ring_buffer) << "\n";
-		//std::cerr << "playback rb read fail: result = " << result << " size = " << size << "\n";
-		return;
-	}
-	//std::memcpy(pFramesOut, pOut, size);
-	//ma_rb_commit_read(&ctx->ring_buffer, size);
-	iter = ctx->vc_streams.begin();
-	for (; iter != ctx->vc_streams.end(); ++iter) {
-		//ma_rb_commit_read(&iter->second.playback_rb, iter->second.size);
-	}
-
-	//std::cout << "read rb_playback " << size << "\n";
-	if (size < total_bytes) {
-		//	std::cout << "playback size < total_bytes : " << size << " < " << total_bytes << "\n";
-		std::memset((uint8_t*)pFramesOut + size, 0, total_bytes - size);
-	}
-	if (total_size < total_bytes) {
-		std::memset((uint8_t*)pFramesOut + total_size, 0, total_bytes - total_size);
-	}
-}*/
-
-void capture_callback_test(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
-	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
-	ma_result result;
-	ma_uint32 framesWritten;
-	framesWritten = 0;	
-
-	while (framesWritten < frameCount && ctx->c->running_capture_) {
-		//std::cout << "START frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
-		void* pMappedBuffer;
-		ma_uint32 framesToWrite = frameCount - framesWritten;
-		size_t sizeInBytes;
-		sizeInBytes = framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels);
-		result = ma_rb_acquire_write(&ctx->ring_buffer, &sizeInBytes, &pMappedBuffer);
-		//std::cout << "sizeInBytes after acquire = " << sizeInBytes << "\n";
-		if (result != MA_SUCCESS) {
-			std::cerr << "acquire_write fail " << " size = " << sizeInBytes << "\n";
-			break;
-		}
-		framesToWrite = (ma_uint32)(sizeInBytes / ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
-
-		if (framesToWrite == 0) {
-			//std::cerr << "framesToWrite == 0\n";
-			break;
-		}
-		//std::cout << "framesToWrite = " << framesToWrite << "\n";
-		const float* in = ((const float*)pFramesIn) + (framesWritten * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
-		//const float* in = ((const float*)pFramesIn) + (framesWritten * pDevice->capture.channels);
-
-		const float sample_count = framesToWrite * pDevice->capture.channels;
-		std::vector<float> out(sample_count);
-		ctx->sound_controls.apply_gain(out.data(), in, sample_count, powf(10.0f, gain * 0.45f));
-		
-		unsigned char encoded[4000];
-		/*int encoded_bytes = opus_encode_float(
-			ctx->encoder,
-			out.data(),
-			frame_size,
-			encoded,
-			sizeof(encoded)
-		);*/
-
-		std::memcpy(pMappedBuffer, out.data(), sizeInBytes);
-		//std::memcpy(pMappedBuffer, encoded, encoded_bytes);
-		result = ma_rb_commit_write(&ctx->ring_buffer, framesToWrite * ma_get_bytes_per_frame(pDevice->capture.format, pDevice->capture.channels));
-
-		if (result != MA_SUCCESS) {
-			std::cout << "commit write fails\n";
-			break;
-		}
-		framesWritten += framesToWrite;
-		//std::cout << "END frameCount[" << frameCount << "] framesWritten[" << framesWritten << "]\n";
-	}
-}
-void playback_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
-	auto* ctx = static_cast<Audio_Context*>(device->pUserData);
-	if (ctx->c->session_token.length() != 16) {
-		std::cerr << "bad token[" << ctx->c->session_token << "]\n"; return; }
-	//std::cout << "token[" << ctx->c->session_token << "] good recording playback\n";
-	auto* out = static_cast<uint16_t*>(output);
-	void* pread_void = nullptr;
-	size_t read_size = sizeof(ctx->packet);
-	ma_result result = ma_rb_acquire_read(&ctx->ring_buffer, &read_size, &pread_void);
-	if (result != MA_SUCCESS || read_size < sizeof(uint16_t)) {
-		return;
-	}
-	uint8_t* pread = static_cast<uint8_t*>(pread_void);
-	uint16_t len = 0;
-	std::memcpy(&len, pread, sizeof(len));
-	
-	size_t total = sizeof(len) + len;
-	if (read_size < total) {
-		return;
-	}
-	std::memcpy(ctx->packet, pread, total);
-	ma_rb_commit_read(&ctx->ring_buffer, total);
-	const uint8_t* encoded = ctx->packet + sizeof(len);
-	int encoded_bytes = len;
-
-	float decoded_buffer[(int)frame_size];
-	int decoded_frames = opus_decode_float(ctx->decoder, encoded, encoded_bytes, decoded_buffer, frame_count, 0);
-	if (decoded_frames < 0) {
-		memset(out, 0, frame_count * sizeof(uint16_t));
-		return;
-	}
-	for (int i = 0; i < decoded_frames; ++i) {
-		//out[i] = std::clamp(decoded_buffer[i], -1.0f, 1.0f);
-		float amplified = decoded_buffer[i] * 1.5f;
-		out[i] = static_cast<int16_t>(std::clamp(amplified * 32768.0f, -32768.0f, 32767.0f));
-	}
-}
-void capture_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
-	/*auto* ctx = static_cast<Audio_Context*>(device->pUserData);
-	auto* in = static_cast<const int16_t*>(input);
-	if (ctx->c->session_token.length() != 16) { std::cerr << "bad token\n"; return; }
-	//std::cout << "token[" << ctx->c->session_token << "] good recording callback\n";
-	int16_t cleaned_samples[frame_size];
-	float new_rms = compute_rms(in, frame_count);
-	ctx->rms_smoothed = 0.2f * ctx->rms_smoothed + 0.8f * new_rms;
-	//ctx->rms_smoothed = new_rms;
-	if (ctx->rms_smoothed > upper_threshold) {
-		ctx->silence_frames = 0;
-		ctx->fade_index = ctx->fade_duration;
-		ctx->fading_out = false;
-		ctx->speaking = true;
-	}
-	else if (ctx->rms_smoothed < lower_threshold) {
-		ctx->silence_frames++;
-		if (ctx->silence_frames > 10) {
-			ctx->speaking = false;
-			if (ctx->fade_index > 0) {
-				ctx->fading_out = true;
-				ctx->fade_index--;
-			}
-			else {
-				ctx->fading_out = false;
-			}
-		}
-	}
-
-	float target_gain = ctx->speaking ? ctx->gain : 1.0f;
-	ctx->current_gain += (target_gain - ctx->current_gain) * 0.05f;
-
-	if (!ctx->speaking) {
-		ctx->noise_profile.update(in, frame_count);
-		if (!ctx->fading_out) {
-			//std::memset(out, 0, frame_count * sizeof(int16_t));
-			std::cout << "!ctx->fading_out\n";
-			return;
-		}
-	}
-	for (ma_uint32 i = 0; i < frame_count; ++i) {
-		float sample = static_cast<float>(in[i]);
-		//float cleaned = sample - ctx->noise_profile.get(i);
-		float cleaned = sample;
-		if (std::abs(cleaned) < 10.0f) {
-			cleaned = 0.0f;
-		}
-		cleaned *= ctx->current_gain;
-		if (std::abs(cleaned) < 10.0f) {
-			cleaned = 0.0f;
-		}
-		cleaned = ctx->hp_filter.process(cleaned);
-		cleaned = ctx->lp_filter.process(cleaned);
-		if (ctx->fading_out) {
-			float fade = static_cast<float>(ctx->fade_index) / ctx->fade_duration;
-			cleaned *= fade;
-		}
-		cleaned_samples [i] = static_cast<int16_t>(std::clamp(cleaned, -32768.0f, 32767.0f));
-	}
-	//assume my ring_buffer is initialized to hold 32KB
-	uint8_t encoded[4000];
-	//float input_float[frame_size];
-	for (size_t i = 0; i < frame_count; ++i)
-		ctx->input_float[i] = static_cast<float>(cleaned_samples[i]) / 32768.0f;
-
-	ma_result result;
-	int encoded_bytes = opus_encode_float(ctx->encoder, ctx->input_float, frame_count, encoded, sizeof(encoded));
-	if (encoded_bytes <= 0) {
-		//dropped frames. opus error
-		std::cout << "encoded_bytes <= 0 error\n";
-		return;
-	}
-	voice_chat_message vm{};
-	vm.set_header(ctx->c->session_token, encoded_bytes, ctx->c->vc_room_id, ctx->c->me.id);
-	uint16_t len = static_cast<uint16_t>(encoded_bytes);
-	const size_t header_size = sizeof(vm.header_length);
-	//const size_t header_size = vm.header_length;
-	size_t total = header_size + size_t(encoded_bytes);
-
-	void* pwrite_void = nullptr;
-	size_t write_size = total;
-	result = ma_rb_acquire_write(&ctx->ring_buffer, &write_size, &pwrite_void);
-	if (result != MA_SUCCESS || write_size < total) {
-		//dropped frames. call ma_rb_release()?		
-		std::cout << "result = [" << result << "] write_size [" << write_size << "] total[" << total << "] encoded_byte[" << encoded_bytes << "]\n";
-		return;
-	}
-	uint8_t* pwrite = static_cast<uint8_t*>(pwrite_void);
-
-	std::memcpy(pwrite, vm.get_data(), vm.header_length);
-	std::memcpy(pwrite + vm.header_length, encoded, size_t(encoded_bytes));
-
-	result = ma_rb_commit_write(&ctx->ring_buffer, total);*/
-}
 std::mutex mtx;
 std::condition_variable cv;
 bool shutdown_requested = false;
@@ -2571,204 +2416,6 @@ void worker_thread() {
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	//exit thread
-}
-
-void refresh_capture_device_list(ma_context& ma_context_) {
-	ma_context_get_devices(&ma_context_, NULL, NULL, &capture_devices, &capture_count);
-	capture_devices_names.clear();
-	capture_devices_names_storage.clear();
-	for (ma_uint32 i = 0; i < capture_count; i++) {
-		//std::cout << i << ": " << capture_devices[i].name << "\n";
-		capture_devices_names_storage.emplace_back(capture_devices[i].name);
-		capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
-	}
-}
-void refresh_playback_device_list(ma_context& ma_context_) {
-	ma_context_get_devices(&ma_context_, &playback_devices, &playback_count, NULL, NULL);
-	playback_devices_names.clear();
-	playback_devices_names_storage.clear();
-	for (ma_uint32 i = 0; i < playback_count; i++) {
-		//std::cout << i << ": " << playback_devices[i].name << "\n";
-		playback_devices_names_storage.emplace_back(playback_devices[i].name);
-		playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
-	}
-}
-int init_capture_context(ma_context& ma_context_) {
-	ma_result result;
-	result = ma_context_init(NULL, 0, NULL, &ma_context_);
-	if (result != MA_SUCCESS) {
-		std::cout << "Failed to initialize capture context\n";
-		return -1;
-	}
-}
-int init_playback_context(ma_context& ma_context_) {
-	ma_result result;
-	result = ma_context_init(NULL, 0, NULL, &ma_context_);
-	if (result != MA_SUCCESS) {
-		std::cout << "Failed to initialize capture context\n";
-		return -1;
-	}
-}
-int init_capture_device_test(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx) {
-	ma_result result;
-	ma_device_config deviceConfigCapture;
-	result = ma_context_get_devices(&ma_context_, NULL, NULL, &capture_devices, &capture_count);
-	if (result != MA_SUCCESS) {
-		std::cout << "Failed to get capture device\n";
-		return -1;
-	}
-	capture_devices_names.clear();
-	capture_devices_names_storage.clear();
-	for (ma_uint32 i = 0; i < capture_count; i++) {
-		//std::cout << i << ": " << capture_devices[i].name << "\n";
-		capture_devices_names_storage.emplace_back(capture_devices[i].name);
-		capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
-	}
-	if (capture_count > 0) {
-		if (selected_capture >= capture_count) { 
-			std::cout << "selected_capture >= capture count\n";
-			return -1; }
-		//std::cout << "selecting " << capture_devices[selected_capture].name << "\n";
-	}
-	deviceConfigCapture = ma_device_config_init(ma_device_type_capture);
-	deviceConfigCapture.capture.format = ma_format_f32;
-	deviceConfigCapture.capture.pDeviceID = &capture_devices[selected_capture].id;
-	deviceConfigCapture.dataCallback = capture_callback_test;
-	//deviceConfigCapture.pUserData = &ma_context_;
-	deviceConfigCapture.pUserData = &ctx;
-
-	result = ma_device_init(NULL, &deviceConfigCapture, &device_);
-	if (result != MA_SUCCESS) {
-		std::cout << "Failed to initialize capture device\n";
-		return -1;
-	}
-}
-int init_playback_device_test(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx) {
-	//MARKER2
-	ma_result result;
-	ma_device_config deviceConfigPlayback;
-	//ma_device_info* playback_devices;
-	//ma_uint32 playback_count;
-	result = ma_context_get_devices(&ma_context_, &playback_devices, &playback_count, NULL, NULL);
-	if (result != MA_SUCCESS) {
-		std::cout << "Failed to get capture devices\n";
-		return -1;
-	}
-	playback_devices_names.clear();
-	playback_devices_names_storage.clear();
-	for (ma_uint32 i = 0; i < playback_count; i++) {
-		//std::cout << i << ": " << playback_devices[i].name << "\n";
-		playback_devices_names_storage.emplace_back(playback_devices[i].name);
-		playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
-	}
-	if (playback_count > 0) {
-		if (selected_playback >= playback_count) {
-			std::cout << "selected_playback >= playback_count\n";
-			return -1;
-		}
-		//std::cout << "selecting " << playback_devices[selected_playback].name << "\n";
-	}
-	deviceConfigPlayback = ma_device_config_init(ma_device_type_playback);
-	deviceConfigPlayback.playback.format = ma_format_f32;
-	deviceConfigPlayback.playback.pDeviceID = &playback_devices[selected_playback].id;
-	deviceConfigPlayback.dataCallback = playback_callback_test;
-	//deviceConfigPlayback.pUserData = &ma_context_;
-	deviceConfigPlayback.pUserData = &ctx;
-
-	result = ma_device_init(NULL, &deviceConfigPlayback, &device_);
-	if (result != MA_SUCCESS) {
-		std::cout << "Failed to initialize playback device\n";
-		return -1;
-	}
-}
-int init_capture_device(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx) {
-	//ctx = Audio_Context(frame_size, sample_rate);
-	ctx.lp_filter.setLowPass(sample_rate, 6000.0f);
-	ctx.hp_filter.set(sample_rate, 100.0f);
-	int error;
-	ctx.encoder = opus_encoder_create(sample_rate, 1, OPUS_APPLICATION_VOIP, &error);
-	ctx.decoder = opus_decoder_create(sample_rate, 1, &error);
-	if (error != OPUS_OK) {
-		std::cerr << "opus init fail: " << opus_strerror(error) << "\n";
-	}
-	ma_context_init(NULL, 0, NULL, &ma_context_);
-
-	ma_device_info* capture_devices;
-	ma_uint32 capture_count;
-	ma_context_get_devices(&ma_context_, NULL, NULL, &capture_devices, &capture_count);
-
-	for (ma_uint32 i = 0; i < capture_count; i++) {
-		std::cout << i << ": " << capture_devices[i].name << "\n";
-	}
-
-	ma_device_config config = ma_device_config_init(ma_device_type_duplex);
-	config.capture.pDeviceID = &capture_devices[2].id;
-	config.sampleRate = SAMPLE_RATE;
-	config.playback.format = ma_format_s16;
-	config.playback.channels = CHANNELS;
-	config.capture.format = ma_format_s16;
-	config.capture.channels = CHANNELS;
-	config.dataCallback = capture_callback;
-	config.notificationCallback = on_notification;
-	config.periodSizeInFrames = frame_size;
-	config.sampleRate = sample_rate;
-	config.pUserData = &ctx;
-
-	size_t buffer_size_bytes = packet_size * packet_count;
-	ma_result result = ma_rb_init(frame_size, nullptr, nullptr, &ctx.ring_buffer);
-
-	if (ma_device_init(&ma_context_, &config, &device_) != MA_SUCCESS) {
-		std::cerr << "Failed to initialize audio device\n";
-		return -1;
-	}
-}
-int init_playback_device(ma_device& device_, ma_context& ma_context_, Audio_Context& ctx) {
-	//ctx = Audio_Context(frame_size, sample_rate);
-	int error;
-	ctx.decoder = opus_decoder_create(sample_rate, 1, &error);
-	if (error != OPUS_OK) {
-		std::cerr << "opus init fail: " << opus_strerror(error) << "\n";
-	}
-	ma_context_init(NULL, 0, NULL, &ma_context_);
-
-	ma_device_info* playback_devices;
-	ma_uint32 playback_count;
-	ma_context_get_devices(&ma_context_, &playback_devices, &playback_count, NULL, NULL);
-
-	for (ma_uint32 i = 0; i < playback_count; i++) {
-		std::cout << i << ": " << playback_devices[i].name << "\n";
-	}
-
-	ma_device_config config = ma_device_config_init(ma_device_type_duplex);
-	config.playback.pDeviceID = &playback_devices[2].id;
-	config.sampleRate = SAMPLE_RATE;
-	config.playback.format = ma_format_s16;
-	config.playback.channels = CHANNELS;
-	config.dataCallback = playback_callback;
-	config.notificationCallback = on_notification;
-	config.periodSizeInFrames = frame_size;
-	config.sampleRate = sample_rate;
-	config.pUserData = &ctx;
-
-	size_t buffer_size_bytes = packet_size * packet_count;
-	ma_result result = ma_rb_init(frame_size, nullptr, nullptr, &ctx.ring_buffer);
-
-	if (ma_device_init(&ma_context_, &config, &device_) != MA_SUCCESS) {
-		std::cerr << "Failed to initialize audio device\n";
-		return -1;
-	}
-}
-int start_device(ma_device& device) {
-	if (ma_device_start(&device) != MA_SUCCESS) {
-		std::cerr << "Failed to start audio device\n";
-		return -1;
-	}
-}
-int stop_device(ma_device& device) {
-	if (ma_device_stop(&device) != MA_SUCCESS) {
-		std::cerr << "Failed to stop audio device\n";
-		return -1;
-	}
 }
 
 void test_digest() {
@@ -3429,19 +3076,20 @@ int main(int argc, char* argv[])
 		std::cout << "close sockets\n";
 		c->close();
 		std::cout << "stop capture/playback\n";
-		c->stop_capture();
-		c->stop_playback();
-		std::cout << "uninit_capture and playback\n";
-		if (c->capture_init) {
-			c->uninit_capture();
+		c->audio_ctx.stop_capture();
+		c->audio_ctx.stop_playback();
+		//std::cout << "uninit_capture\n";
+		if (c->audio_ctx.capture_init) {
+			c->audio_ctx.uninit_capture();
 		}
-		if (c->playback_init) {
-			c->uninit_playback();
+		std::cout << "uninit_playback\n";
+		if (c->audio_ctx.playback_init) {
+			c->audio_ctx.uninit_playback();
 		}
 		//c->uninit_capture_rb();
 		//c->uninit_playback_rb();
 		std::cout << "uninit vc_streams\n";
-		c->uninit_vc_streams();
+		c->audio_ctx.uninit_vc_streams();
 		work_guard.reset();
 		io_context.stop();
 		t.join();
