@@ -704,6 +704,75 @@ public:
 			participant_map.at(sender_id)->stop_read_vc_rb();
 		}
 	}
+	void update_vc_status(chat_message& m) {
+		uint8_t sender_id = m.body()[0];
+		uint8_t receiver_id = m.body()[1];
+		uint8_t sender_enable = m.body()[2];
+
+		auto it_sender = participant_map.find(sender_id);
+		auto it_receiver = participant_map.find(receiver_id);
+		if (it_sender == participant_map.end() || it_receiver == participant_map.end()) {
+			return;
+		}
+
+		uint8_t a = std::min(sender_id, receiver_id);
+		uint8_t b = std::max(sender_id, receiver_id);
+		auto key = std:make_pair(a, b);
+
+		auto& state = vc_hashmap[key];
+
+		if (sender_id == a) {
+			state.first == sender_enable;
+		}
+		else {
+			state.second == sender_enable;
+		}
+
+		bool both_consented = (state.first == 1 && state.second == 1);
+
+		auto& pa = *participant_map[a];
+		auto& pb = *participant_map[b];
+
+		if (both_consented) {
+			pa.get_vc_partner_ids()->insert(b);
+			pb.get_vc_partner_ids()->insert(a);
+
+
+			if (!pa.get_vc_enabled) {
+				pa.start_read_vc_rb();
+				pa.set_vc_enabled(1);
+				send_server_udp_port(a, b);
+			}
+			else {
+				send_partner_id(a, b);
+			}
+
+			if (a != b) {
+				if (!pb.get_vc_enabled()) {
+					pb.start_read_vc_rb();
+					pb.set_vc_enabled(1);
+					send_server_udp(b, a);
+				}
+				else {
+					send_partner_id(b, a);
+				}
+			}
+		}
+		else {
+			pa.get_vc_partner_ids()->erase(b);
+			pb.get_vc_partner_ids()->erase(a);
+			
+			if (pa.get_vc_partner_ids()->empty() && pa.get_vc_enabled()) {
+				pa.stop_read_vc_rb();
+				pa.set_vc_enabled(0);
+			}
+			if (pb.get_vc_partner_ids()->empty() && pb.get_vc_enabled()) {
+				pb.stop_read_vc_rb();
+				pb.set_vc_enabled(0);
+			}
+		}
+
+	}
 	void update_vc_status_test(chat_message& m) {
 		print_client_vp_lists();
 		std::cout << "update_vc_status_test()\n";

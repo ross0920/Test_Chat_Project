@@ -1062,7 +1062,7 @@ private:
 			&pOut
 		);
 		if (result != MA_SUCCESS || frames_written == 0) {
-			std::cout << "result: " << result << "\n";
+			//std::cout << "result: " << result << "\n";
 			return;
 		}
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
