@@ -1147,6 +1147,45 @@ public:
 	}
 	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
 		//std::cout << "write_vc_msg_to_rb()\n";
+		if (vc_partner_ids.size() == 0) {
+			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
+			return;
+		}
+		size_t size = recv_vc_msg_->body_length();
+		uint16_t len16 = (uint16_t)size;
+		std::cout << "len16 server body size = " << len16 << "\n";
+		size_t total_needed = 2 + size;
+		if (ma_rb_available_write(&vc_rb) < total_needed) {
+			return;
+		}
+		{
+			size_t chunk = 2;
+			void* p;
+			ma_rb_acquire_write(&vc_rb, &chunk, &p);
+			std::memcpy(p, &len16, 2);
+			ma_rb_commit_write(&vc_rb, 2);
+		}
+		
+
+		size_t remaining = size;
+		uint8_t* src = recv_vc_msg_->body();
+		while (remaining > 0) {
+			size_t chunk = remaining;
+			void* pwrite_void = nullptr;
+			ma_result result = ma_rb_acquire_write(&vc_rb, &chunk, &pwrite_void);
+			/*if (result != MA_SUCCESS || size == 0) {
+				std::cerr << "fail server write acquire size = " << size << "\n";
+				break;
+			}*/
+			std::memcpy(pwrite_void, src, chunk);
+			ma_rb_commit_write(&vc_rb, chunk);
+			src += chunk;
+			remaining -= chunk;
+		}
+}
+
+	/*void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
+		//std::cout << "write_vc_msg_to_rb()\n";
 		if (vc_partner_ids.size() == 0) { 
 			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
 			return; }
@@ -1172,30 +1211,34 @@ public:
 			total_written += size;
 		}
 		//std::cout << "total_written = " << total_written << "\n";
-	}
+	}*/
 	bool try_send_vc_msg(void* in, size_t size) {
-		//std::cout << "try_send_vc_msg()\n";
 		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
-		uint8_t test = 3;
-		//std::cout << "encoding:"
-			///<< "\n\tsession_token[" << session_token << "]"
-			//<< "\n\tsize[" << static_cast<int>(size) << "]"
-			//<< "\n\tvc_room_id[" << static_cast<int>(vc_room_id) << "]"
-			//<< "\n\tid[" << static_cast<int>(id) << "]"
-			//<< "\n\ttest[" << static_cast<int>(test) << "]\n";
 		m->encode_header(session_token, size, vc_room_id, id);
+		std::cout << "try_send_vc_msg()\n"
+			<< "\tsession_token: " << session_token
+			<< "\tsize: " << m->body_length()
+			<< "\tvc_room_id: " << static_cast<int>(vc_room_id)
+			<< "\tid: " << static_cast<int>(id) << "\n";
 		std::memcpy(m->body(), in, size);
-		//std::cout << "m->sender_id[" << static_cast<int>(m->sender_id) << "]\n";
-		//std::cout << "send_message_to_playback()\n";		
 		send_message_to_playback(m, id);	
 		return true;
 	}
 	void send_message_to_playback(std::shared_ptr<voice_chat_message> recv_vc_msg_, uint8_t& sender_id) {
 		auto self = shared_from_this();
 		auto iter = vc_partner_ids.begin();
+		const uint8_t* a = (const uint8_t*)recv_vc_msg_->data();
+		int len = recv_vc_msg_->header_length;
+		std::string header_1 = std::string((char*)a, len);
+		std::cout << "pre loop send_message_to_playback header = " << header_1 << "\n";
+
 		std::cout << "recv_vc_msg->sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
 		for (; iter != vc_partner_ids.end(); ++iter) {
 			auto msg_copy = std::make_shared<voice_chat_message>(*recv_vc_msg_);
+			const uint8_t* aad = (const uint8_t*)msg_copy->data();
+			int aad_len = msg_copy->header_length;
+			std::string header = std::string((char*)aad, aad_len);
+			std::cout << "send_message_to_playback header = " << header << "\n";
 			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
 			size_t size = msg_copy->length();
 			//std::cout << "do async send\n";
@@ -1216,15 +1259,8 @@ public:
 					}	
 				}
 			);
-			//std::cout << "async send complete\n";
 		}
-		//don't want to commit read for every person, but need to only commit after all sends have completed??
-		//std::cout << "get sender\n";
-		
-		//std::cout << "at id " << static_cast<int>(sender_id) << "\n";
-		//std::cout << "commit read of size " << recv_vc_msg_->body_length() << "\n";
-		//std::cout << "send to " << sender->name << "\n";
-		commit_read_rb(recv_vc_msg_->body_length());
+		//commit_read_rb(recv_vc_msg_->body_length());
 	}
 
 	void start_read_vc_rb() override {
@@ -1238,6 +1274,44 @@ public:
 		uninit_rb();
 	}
 	void read_vc_rb() override {
+		if (!running_vc) { return; }
+		auto self = shared_from_this();
+		uint16_t packet_len = 0;
+		{
+			size_t chunk = 2;
+			void* p;
+			if (ma_rb_acquire_read(&vc_rb, &chunk, &p) != MA_SUCCESS || chunk < 2) {
+				boost::asio::post(io_context, [self] {
+					self->read_vc_rb();
+				});
+				return;
+			}
+			memcpy(&packet_len, p, 2);
+
+			ma_rb_commit_read(&vc_rb, 2);
+		}
+		
+		std::vector<uint8_t> buf(packet_len);
+
+		ma_result result;
+		size_t remaining = packet_len;
+		uint8_t* dst = buf.data();
+		while (remaining > 0) {
+			size_t chunk = remaining;
+			void* p;
+			ma_rb_acquire_read(&vc_rb, &chunk, &p);
+			memcpy(dst, p, chunk);
+			ma_rb_commit_read(&vc_rb, chunk);
+			dst += chunk;
+			remaining -= chunk;
+		}
+		if (!try_send_vc_msg(buf.data(), packet_len)) {
+			return;
+		}
+		boost::asio::post(io_context, [self] { self->read_vc_rb(); });
+	}
+
+	/*void read_vc_rb() override {
 		if (!running_vc) { return; }
 		auto self = shared_from_this();
 		ma_result result;
@@ -1254,19 +1328,12 @@ public:
 		//std::cout << "actual read size[" << size << "]\n";
 		if (size > voice_chat_message::max_body_length) { size = voice_chat_message::max_body_length; }
 		if (!try_send_vc_msg(pOut, size)) {
-			/*auto retry_timer = std::make_shared <boost::asio::steady_timer>(io_context);
-			retry_timer->expires_after(std::chrono::milliseconds(2));
-			retry_timer->async_wait([this, self, retry_timer](boost::system::error_code ec) {
-				if (!ec) {
-					read_vc_rb();
-				}
-			});*/
 			//shut down voice chat TODO
 			return;
 		}
 		//std::cout << "try send done re posting read_vc_rb\n";
 		boost::asio::post(io_context, [self] { self->read_vc_rb(); });
-	}
+	}*/
 	void deliver(const chat_message& msg) override
 	{
 		bool write_in_progress = !write_msgs_.empty();

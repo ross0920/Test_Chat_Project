@@ -887,11 +887,18 @@ public:
 
 			std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 			uint16_t body_len = (uint16_t)(4 + encoded_bytes + 16);
+			std::cout << "encrypt me.id = " << static_cast<int>(me.id) << "\n";
 			m->encode_header(session_token, body_len, vc_room_id, me.id);
 			const uint8_t* aad = (const uint8_t*)m->data();
 			int aad_len = m->header_length;
 			std::string header = std::string((char*)aad, aad_len);
-			std::cout << "pre-encrypt header: " << header << "\n";					
+			std::cout << "pre-encrypt header: " << header << "\n";		
+			std::cout << "client body_len = " << body_len << "\n";
+			std::cout << "header content\n"
+				<< "\tsession_token = " << session_token
+				<< "\tbody_len = " << m->body_length()
+				<< "\tvc_room_id = " << static_cast<int>(vc_room_id)
+				<< "\tsender_id = " << static_cast<int>(me.id) << "\n";
 			if (!aes_gcm_encrypt(
 				audio_ctx.session_key.data(),
 				nonce,
@@ -1007,6 +1014,15 @@ private:
 		int aad_len = read_vc_msg_->header_length;
 		std::string header = std::string((char*)aad, aad_len);
 		std::cout << "pre-decrypt header: " << header << "\n";
+		std::cout << "client decrypt body_length = " << body_len << "\n";
+		std::cout << "pre-decrypt full header: " << header << "\n";
+		std::cout << "client body_len = " << body_len << "\n";
+		std::cout << "header content\n"
+			<< "\tsession_token = " << read_vc_msg_->token
+			<< "\tbody_len = " << read_vc_msg_->body_length()
+			<< "\tvc_room_id = " << static_cast<int>(read_vc_msg_->room_id)
+			<< "\tsender_id = " << static_cast<int>(read_vc_msg_->sender_id) << "\n";
+
 		uint8_t opus_packet[4000];
 
 		if (!aes_gcm_decrypt(
@@ -1171,6 +1187,7 @@ private:
 	}
 	void read_id(chat_message& m) {
 		std::memcpy(&me.id, m.body(), sizeof(uint8_t));
+		std::cout << "receive read_id id is " << static_cast<int>(me.id) << "\n";
 	}
 	void store_server_port(chat_message& m) {
 		/*uint8_t sender_id = 0;
@@ -1587,6 +1604,7 @@ bool aes_gcm_encrypt(
 				std::string token = decode_session_token(m);
 				if (token == session_token) {
 					std::cout << "session token validated. start_capture and playback\n";
+					vc_room_id = 0;
 					audio_ctx.start_capture();
 					audio_ctx.start_playback();
 					check_and_read_header_test();
