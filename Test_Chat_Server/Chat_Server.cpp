@@ -328,7 +328,7 @@ public:
 		if (participant_map.find(recv_vc_msg_->sender_id) == participant_map.end()) { 
 			std::cout << "sender id not found\n";
 			return false; }
-		std::cout << "route_udp to sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
+		//std::cout << "route_udp to sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
 		participant_map.at(recv_vc_msg_->sender_id)->write_vc_msg_to_rb(recv_vc_msg_);
 		return true;
 	}
@@ -1153,7 +1153,7 @@ public:
 		}
 		size_t size = recv_vc_msg_->body_length();
 		uint16_t len16 = (uint16_t)size;
-		std::cout << "len16 server body size = " << len16 << "\n";
+		//std::cout << "len16 server body size = " << len16 << "\n";
 		size_t total_needed = 2 + size;
 		if (ma_rb_available_write(&vc_rb) < total_needed) {
 			return;
@@ -1215,11 +1215,11 @@ public:
 	bool try_send_vc_msg(void* in, size_t size) {
 		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 		m->encode_header(session_token, size, vc_room_id, id);
-		std::cout << "try_send_vc_msg()\n"
-			<< "\tsession_token: " << session_token
-			<< "\tsize: " << m->body_length()
-			<< "\tvc_room_id: " << static_cast<int>(vc_room_id)
-			<< "\tid: " << static_cast<int>(id) << "\n";
+		//std::cout << "try_send_vc_msg()\n"
+			//<< "\tsession_token: " << session_token
+			//<< "\tsize: " << m->body_length()
+			//<< "\tvc_room_id: " << static_cast<int>(vc_room_id)
+			//<< "\tid: " << static_cast<int>(id) << "\n";
 		std::memcpy(m->body(), in, size);
 		send_message_to_playback(m, id);	
 		return true;
@@ -1230,15 +1230,15 @@ public:
 		const uint8_t* a = (const uint8_t*)recv_vc_msg_->data();
 		int len = recv_vc_msg_->header_length;
 		std::string header_1 = std::string((char*)a, len);
-		std::cout << "pre loop send_message_to_playback header = " << header_1 << "\n";
+		//std::cout << "pre loop send_message_to_playback header = " << header_1 << "\n";
 
-		std::cout << "recv_vc_msg->sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
+		//std::cout << "recv_vc_msg->sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
 		for (; iter != vc_partner_ids.end(); ++iter) {
 			auto msg_copy = std::make_shared<voice_chat_message>(*recv_vc_msg_);
 			const uint8_t* aad = (const uint8_t*)msg_copy->data();
 			int aad_len = msg_copy->header_length;
 			std::string header = std::string((char*)aad, aad_len);
-			std::cout << "send_message_to_playback header = " << header << "\n";
+			//std::cout << "send_message_to_playback header = " << header << "\n";
 			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
 			size_t size = msg_copy->length();
 			//std::cout << "do async send\n";
@@ -1253,9 +1253,9 @@ public:
 					}
 					else {
 						//std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
-						std::cout << "write to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
-							<< " write to client size [" << size << "]\n\t" 
-							<< ep->port() << " ip " << ep->address() << " success\n";
+						//std::cout << "write to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
+						//	<< " write to client size [" << size << "]\n\t" 
+						//	<< ep->port() << " ip " << ep->address() << " success\n";
 					}	
 				}
 			);

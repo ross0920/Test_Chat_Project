@@ -45,7 +45,6 @@ public:
 			body_length_ = max_body_length;
 	}
 	void encode_header(std::string token_, uint16_t new_body_length_, uint8_t room_id_, uint8_t sender_id_) {
-		std::cout << "ENCODE THIS THING\n";
 		token_len = token_length;
 		//std::cout << "assigning token\n";
 		token = token_;
@@ -63,7 +62,6 @@ public:
 		//std::cout << "write room_id: [" << static_cast<int>(room_id_) << "]\n";
 		ptr += sizeof(room_id_);
 		std::memcpy(ptr, &sender_id_, sizeof(sender_id_));
-		std::cout << "write sender_id: [" << static_cast<int>(sender_id_) << "]\n";
 		ptr += sizeof(sender_id_);
 		//std::cout << "try write body_length: [" << body_length_ << "]\n";
 		std::memcpy(ptr, &body_length_, sizeof(body_length_));
