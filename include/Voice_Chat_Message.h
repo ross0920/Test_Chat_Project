@@ -44,7 +44,6 @@ public:
 		if (body_length_ > max_body_length)
 			body_length_ = max_body_length;
 	}
-
 	void encode_header(std::string token_, uint16_t new_body_length_, uint8_t room_id_, uint8_t sender_id_) {
 		//std::cout << "ENCODE THIS THING\n";
 		token_len = token_length;

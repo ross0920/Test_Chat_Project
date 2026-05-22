@@ -29,6 +29,7 @@
 #include <boost/archive/iterators/binary_from_base64.hpp>
 #include <ssl/include/openssl/ssl.h>
 #include <ssl/include/openssl/err.h>
+#include <ssl/include/openssl/rand.h>
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
@@ -270,17 +271,31 @@ public:
 	boost::asio::io_context& io_context_;
 	boost::asio::steady_timer timer_;
 };
-
+struct room_crypto {
+	std::array<uint8_t, 32> session_key;
+	std::array<uint8_t, 12> iv_base;
+};
 class chat_room : public std::enable_shared_from_this<chat_room> {
 public:
 	chat_room(std::shared_ptr<udp::socket>udp_socket, udp::endpoint& udp_endpoint, boost::asio::io_context& io_context): 
 		udp_socket_{ std::move(udp_socket) }, udp_endpoint_{ udp_endpoint }, io_context_{ io_context }, vc_hashmap{} {
+		init_room_crypto();
 	}
 	boost::asio::io_context& io_context_;
 	chat_message_queue recent_msgs_;
 	std::unordered_map<uint8_t, chat_participant_ptr> participant_map;
 	std::unordered_map<uint8_t, std::shared_ptr<voice_chat_room>> vc_rooms;
 	std::unordered_map<uint8_t, std::string> tokens;
+	room_crypto rc;
+
+	bool random_bytes(uint8_t* out, size_t len) {
+		return RAND_bytes(out, (int)len) == 1;
+	}
+
+	void init_room_crypto() {
+		random_bytes(rc.session_key.data(), rc.session_key.size());
+		random_bytes(rc.iv_base.data(), rc.iv_base.size());
+	}
 
 	void clean_vc_hash(uint8_t id) {
 		auto iter = vc_hashmap.begin();
@@ -1027,8 +1042,6 @@ public:
 		shutdown_timer{ std::make_shared<boost::asio::steady_timer>(io_context)}
 	{
 	}
-	void update_vc_partner_id(uint8_t receiver_id, std::pair<uint8_t,uint8_t> p) {
-	}
 	std::unordered_set<uint8_t>* get_vc_partner_ids() override {
 		return &vc_partner_ids;
 	}
@@ -1057,6 +1070,15 @@ public:
 	void set_vc_room_id(uint8_t id) override {
 		vc_room_id = id;
 	}
+	/*void send_voice_key() {
+		chat_message msg;
+		msg.set_message_type(message_type::voice_key);
+		msg.body_length(room_->rc.session_key.size() + room_->rc.iv_base.size());
+		std::memcpy(msg.body(), room_->rc.session_key.data(), room_->rc.session_key.size());
+		std::memcpy(msg.body(), room_->rc.iv_base.data(), room_->rc.iv_base.size());
+		msg.encode_header();
+		deliver(msg);
+	}*/
 	void send_authentication_request() {
 		chat_message auth;
 		std::string text = "gimme auth";
@@ -1089,13 +1111,13 @@ public:
 	}
 
 	void start() {
-		chat_message prompt;
-		std::string text = "Enter name:";
-		prompt.body_length(text.length());
-		prompt.set_message_type(message_type::name_challenge);
-		std::memcpy(prompt.body(), text.data(), prompt.body_length());
-		prompt.encode_header();
-		deliver(prompt);
+		chat_message msg;
+		msg.set_message_type(message_type::name_challenge);
+		msg.body_length(room_->rc.session_key.size() + room_->rc.iv_base.size());
+		std::memcpy(msg.body(), room_->rc.session_key.data(), room_->rc.session_key.size());
+		std::memcpy(msg.body(), room_->rc.iv_base.data(), room_->rc.iv_base.size());
+		msg.encode_header();
+		deliver(msg);
 	}
 	void reject() {
 		chat_message prompt;

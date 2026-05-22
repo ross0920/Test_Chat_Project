@@ -40,7 +40,8 @@ enum class message_type : uint8_t {
 	leave = 31,
 	version_check = 32,
 	no_open_room = 33,
-	bad_message = 34
+	voice_key = 34,
+	bad_message = 35
 };
 
 class chat_message {
