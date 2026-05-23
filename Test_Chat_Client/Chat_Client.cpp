@@ -915,6 +915,19 @@ private:
 		if (decoded_frames <= 0) {
 			return;
 		}
+
+		if (decoded_frames < period_size) {
+			std::memset(pcm_out.data() + decoded_frames, 0, (period_size - decoded_frames) * sizeof(float));
+			decoded_frames = period_size;
+		}
+
+		ma_uint32 max_frames = period_size * 5;
+		ma_uint32 readable = ma_pcm_rb_available_read(&stream.playback_rb);
+
+		if (readable > max_frames) {
+			ma_pcm_rb_seek_read(&stream.playback_rb, readable - max_frames);
+		}
+
 		size_t avail = ma_pcm_rb_available_write(&stream.playback_rb);
 		size_t needed = decoded_frames;
 
@@ -922,6 +935,7 @@ private:
 			// drop oldest audio to keep latency bounded
 			ma_pcm_rb_seek_read(&stream.playback_rb, needed - avail);
 		}
+
 		ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
 		ma_uint32 frames_written = frames_to_write;
 		void* pOut = nullptr;
@@ -938,7 +952,7 @@ private:
 		}
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
-		std::memcpy(pOut, pcm_out.data(), bytes_to_write);
+		std::memcpy(pOut, pcm_out.data(), bytes_to_write); 
 		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
 	}
 	std::shared_ptr<boost::asio::steady_timer> retry_read_capture_timer;
