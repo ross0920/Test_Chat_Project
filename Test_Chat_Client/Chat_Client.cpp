@@ -301,12 +301,12 @@ public:
 	bool init_capture_rb(ma_device& capture_device) {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
-		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
+		subBufferSizeInFrames = 48000;
 		bpf = ma_get_bytes_per_frame(network_format, network_channels);
 
 		//std::cout << "capture rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
 		ma_result result;
-		result = ma_rb_init(subBufferSizeInFrames * bpf, NULL, NULL, &capture_rb);
+		result = ma_rb_init(subBufferSizeInFrames /** bpf*/, NULL, NULL, &capture_rb);
 		if (result != MA_SUCCESS) {
 			std::cout << "Failed to initialize capture ring buffer\n";
 			return false;
@@ -317,6 +317,7 @@ public:
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
 		subBufferSizeInFrames = playback_device.playback.internalPeriodSizeInFrames * 5;
+		std::cout << "subBufferSizeInFrames = " << subBufferSizeInFrames << "\n";
 		bpf = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
 
 		std::cout << "playback rb size in bytes = " << subBufferSizeInFrames * bpf << "\n";
@@ -960,6 +961,7 @@ public:
 		}*/
 	}
 	void check_and_read_header_test() {
+		std::cout << "i'm alive\n";
 		auto self = shared_from_this();
 		auto read_vc_msg_ = std::make_shared<voice_chat_message>();
 		udp_socket->async_receive_from(boost::asio::buffer(read_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), server_endpoint,
@@ -967,18 +969,23 @@ public:
 				//std::cout << "async_receive_from lambda body start\n";
 				if (!self->audio_ctx.running_playback) {
 					std::cout << "!running_playback()\n";
-					check_and_read_header_test();
-					return;
+					boost::asio::post(io_context_, [self] {
+						self->check_and_read_header_test();
+						});								return;
 				}
 				if (!ec) {
 					if (!read_vc_msg_->decode_header()) {
 						//std::cout << "udp_socket->async_receive_from decode header fail\n";
-						check_and_read_header_test();
+						boost::asio::post(io_context_, [self] {
+							self->check_and_read_header_test();
+							});						
 						return;
 					}
 					//std::cout << "udp_socket->async_receive_from\n";
 					check_and_read_body_test(read_vc_msg_);
-					check_and_read_header_test();
+					boost::asio::post(io_context_, [self] {
+						self->check_and_read_header_test();
+						});
 				}
 				else {
 					std::cout << "error: " << ec.message() << " close udp socket\n";
@@ -994,6 +1001,8 @@ private:
 		size_t body_len = read_vc_msg_->body_length();
 		uint8_t* body = (uint8_t*)read_vc_msg_->body();
 		uint8_t sender_id = read_vc_msg_->sender_id;
+		//std::cout << "VC PACKET from " << int(sender_id)
+			//<< " body_len=" << body_len << "\n";
 
 		if (body_len < 4 + 16) {
 			//std::cout << "bad packet\n";
@@ -1013,16 +1022,6 @@ private:
 		const uint8_t* aad = (const uint8_t*)read_vc_msg_->data();
 		int aad_len = read_vc_msg_->header_length;
 		std::string header = std::string((char*)aad, aad_len);
-		//std::cout << "pre-decrypt header: " << header << "\n";
-		//std::cout << "client decrypt body_length = " << body_len << "\n";
-		//std::cout << "pre-decrypt full header: " << header << "\n";
-		//std::cout << "client body_len = " << body_len << "\n";
-		//std::cout << "header content\n"
-			//<< "\tsession_token = " << read_vc_msg_->token
-			//<< "\tbody_len = " << read_vc_msg_->body_length()
-			//<< "\tvc_room_id = " << static_cast<int>(read_vc_msg_->room_id)
-			//<< "\tsender_id = " << static_cast<int>(read_vc_msg_->sender_id) << "\n";
-
 		uint8_t opus_packet[4000];
 
 		if (!aes_gcm_decrypt(
@@ -1050,7 +1049,7 @@ private:
 			0
 		);
 		if (decoded_frames <= 0) {
-			//std::cout << "0 decoded frames\n";
+			std::cout << "0 decoded frames\n";
 			return;
 		}
 		ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
@@ -1062,9 +1061,15 @@ private:
 			&pOut
 		);
 		if (result != MA_SUCCESS || frames_written == 0) {
-			//std::cout << "result: " << result << "\n";
+			std::cout << "result: " << result << "\n";
 			return;
 		}
+		if (frames_written < frames_to_write) {
+			//std::cout << "PLAYBACK_RB WRITE UNDERRUN: wanted "
+			//	<< frames_to_write << " wrote " << frames_written << "\n";
+			return;
+		}
+
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
 		std::memcpy(pOut, pcm_out, bytes_to_write);
@@ -1642,7 +1647,7 @@ bool aes_gcm_encrypt(
 				break;
 			}
 			case message_type::heartbeat: {
-				//std::cout << "send heartbeat\n";
+				std::cout << "send heartbeat\n";
 				heartbeat_ping(m);
 				break;
 			}
@@ -2057,6 +2062,10 @@ private:
 void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
 	if (pDevice == nullptr) { return; }
 	//std::cout << "playback_callback_test() start\n";
+	std::cout << "PLAYBACK: ch=" << pDevice->playback.channels
+		<< " fmt=" << pDevice->playback.format
+		<< " rate=" << pDevice->sampleRate << "\n";
+
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 	const ma_uint32 out_ch = pDevice->playback.channels;
 	const ma_uint32 total_samples = frameCount * out_ch;
@@ -2079,6 +2088,12 @@ void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFrames
 			&frames_to_read,
 			&p_in
 		);
+		if (result == MA_SUCCESS && frames_to_read < frameCount) {
+			//std::cout << "UNDERRUN: wanted " << frameCount
+				//<< " got " << frames_to_read
+				//<< " for talker " << int(iter->first) << "\n";
+		}
+
 		if (result != MA_SUCCESS || frames_to_read == 0) {
 			continue;
 		}
