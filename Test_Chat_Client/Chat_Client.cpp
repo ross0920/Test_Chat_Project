@@ -82,7 +82,7 @@ const std::string port = "5000";
 
 const size_t max_playback_size = 3840;
 const int buffer_size = 38400; //19200;
-float db_threshold = 0.5f;
+float db_threshold = 1.0f;
 
 ma_device_info* capture_devices;
 ma_uint32 capture_count = 0;
@@ -1861,7 +1861,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 				}
 				if (ImGui::BeginMenu("Controls")) {
 					ImGui::SliderFloat("##Gain", & gain, 0.0f, 1.0f, "Mic Gain: %.004f");
-					ImGui::SliderFloat("##dB threshold", &db_threshold, 0.0f, 0.5f, "dB threshold: %.004f");
+					ImGui::SliderFloat("##dB threshold", &db_threshold, 0.0f, 1.0f, "dB threshold: %.004f");
 					ImGui::EndMenu();
 				}
 				ImGui::EndMenu();
