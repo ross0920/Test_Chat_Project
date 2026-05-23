@@ -1057,15 +1057,15 @@ private:
 void remove_sender_from_chat(chat_message& m) {
 	uint8_t sender_id;
 	std::memcpy(&sender_id, m.body(), sizeof(sender_id));
-	std::cout << "remove[" << static_cast<int>(sender_id) << "] from chat\n";
+	//std::cout << "remove[" << static_cast<int>(sender_id) << "] from chat\n";
 	if (participant_map.find(sender_id) != participant_map.end())
 	{
-		std::cout << "erase [" << static_cast<int>(sender_id) << "] from participant_map\n";
+		//std::cout << "erase [" << static_cast<int>(sender_id) << "] from participant_map\n";
 		participant_map.erase(sender_id);
 	}
 	if (participant_client_map.find(sender_id) != participant_client_map.end()) {
 		participant_client_map.erase(sender_id);
-		std::cout << "erase [" << static_cast<int>(sender_id) << "] from participant_client_map\n";
+		//std::cout << "erase [" << static_cast<int>(sender_id) << "] from participant_client_map\n";
 	}
 }
 //not using this
