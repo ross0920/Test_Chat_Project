@@ -1240,7 +1240,6 @@ bool aes_gcm_encrypt(
 			case message_type::start_vc: {
 				std::string token = decode_session_token(m);
 				if (token == session_token) {
-					std::cout << "session token validated. start_capture and playback\n";
 					vc_room_id = 0;
 					audio_ctx.start_capture();
 					audio_ctx.start_playback();
