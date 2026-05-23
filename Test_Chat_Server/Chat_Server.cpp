@@ -1175,7 +1175,7 @@ public:
 	void write_vc_msg_to_rb(std::shared_ptr<voice_chat_message> recv_vc_msg_) override {
 		//std::cout << "write_vc_msg_to_rb()\n";
 		if (vc_partner_ids.size() == 0) {
-			std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
+			//std::cout << "vc_partner_ids.size() = " << vc_partner_ids.size() << "\n";
 			return;
 		}
 		size_t size = recv_vc_msg_->body_length();
@@ -1273,9 +1273,9 @@ public:
 		//std::cout << "total_written = " << total_written << "\n";
 	}*/
 	bool try_send_vc_msg(void* in, size_t size) {
-		std::cout << "try_send_vc_msg: size=" << size
-			<< " id=" << int(id)
-			<< " vc_room_id=" << int(vc_room_id) << "\n";
+	//	std::cout << "try_send_vc_msg: size=" << size
+			//<< " id=" << int(id)
+		//	<< " vc_room_id=" << int(vc_room_id) << "\n";
 		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 		m->encode_header(session_token, size, vc_room_id, id);
 		//std::cout << "try_send_vc_msg()\n"
@@ -1316,9 +1316,9 @@ public:
 					}
 					else {
 						//std::cout << "write from client[" << static_cast<int>(id) << "] @ port " << get_client_udp_endpoint()->port() << "/ip " << get_client_udp_endpoint()->address()
-						std::cout << "write to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
-							<< " write to client size [" << size << "]\n\t" 
-							<< ep->port() << " ip " << ep->address() << " success\n";
+						//std::cout << "write to client[" << static_cast<int>(*iter) << "] @ port "  << ep->port()
+						//	<< " write to client size [" << size << "]\n\t" 
+						//	<< ep->port() << " ip " << ep->address() << " success\n";
 					}	
 				}
 			);
@@ -1342,7 +1342,7 @@ public:
 			uninit_rb();
 			return;
 		}
-		std::cout << "read_vc_rb: attempting packet\n";
+		//std::cout << "read_vc_rb: attempting packet\n";
 		auto self = shared_from_this();
 		//uint16_t packet_len = 0;
 		/*{
@@ -1369,8 +1369,8 @@ public:
 			void* p = nullptr;
 			ma_result res = ma_rb_acquire_read(&vc_rb, &chunk, &p);
 			if (res != MA_SUCCESS || chunk == 0) {
-				std::cout << "acquire read header fail res=" << res
-					<< " chunk=" << chunk << "\n";
+				//std::cout << "acquire read header fail res=" << res
+					//<< " chunk=" << chunk << "\n";
 				boost::asio::post(io_context, [self] { self->read_vc_rb(); });
 				return;
 			}
@@ -1392,9 +1392,9 @@ public:
 			void* p;
 			ma_result r = ma_rb_acquire_read(&vc_rb, &chunk, &p);
 			if (r != MA_SUCCESS || chunk == 0) {
-				std::cout << "read_vc_rb: body acquire fail r=" << r
-					<< " chunk=" << chunk
-					<< " remaining=" << remaining << "\n";
+				//std::cout << "read_vc_rb: body acquire fail r=" << r
+					//<< " chunk=" << chunk
+					//<< " remaining=" << remaining << "\n";
 				boost::asio::post(io_context, [self] { self->read_vc_rb(); });
 
 				return; // drop packet or resync
@@ -1405,11 +1405,11 @@ public:
 			remaining -= chunk;
 		}
 		if (!try_send_vc_msg(buf.data(), packet_len)) {
-			std::cout << "fail try_send()\n";
+		//	std::cout << "fail try_send()\n";
 			boost::asio::post(io_context, [self] { self->read_vc_rb(); });
 			return;
 		}
-		std::cout << "read_vc_rb: sent packet_len=" << packet_len << "\n";
+		//std::cout << "read_vc_rb: sent packet_len=" << packet_len << "\n";
 
 		boost::asio::post(io_context, [self] { self->read_vc_rb(); });
 	}
