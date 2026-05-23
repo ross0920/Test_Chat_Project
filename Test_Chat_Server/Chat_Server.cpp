@@ -306,22 +306,15 @@ public:
 				if (check_second != participant_map.end()) {
 					participant_map.at(iter->first.second)->get_vc_partner_ids()->erase(id);
 				}
-				iter->second.first = 0;
 			}
 			else if (iter->first.second == id) {
 				auto  check_first = participant_map.find(iter->first.first);
 				if (check_first != participant_map.end()) {
 					participant_map.at(iter->first.first)->get_vc_partner_ids()->erase(id);
 				}
-				iter->second.second = 0;
 			}
-			bool remove = iter->second.first == 0 && iter->second.second == 0;
-			if (remove) {
-				iter = vc_hashmap.erase(iter);
-			}
-			else {
-				++iter;
-			}
+			iter = vc_hashmap.erase(iter);
+			//++iter;
 		}
 	}
 
@@ -441,16 +434,15 @@ public:
 	}
 	void leave(chat_participant_ptr participant) {
 		//MARKER1
-		//participant->stop_read_vc_rb();
-		//leave_vc_room(participant);//TODO get rid of this
 		//leave any vc rooms first
-		void* callstack[128];
+		/*void* callstack[128];
 		int frames = backtrace(callstack, 128);
 		backtrace_symbols_fd(callstack, frames, STDERR_FILENO);
-		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " leave chat room\n";
+		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " leave chat room\n";*/
 		//remove token
 		if (!participant->id) { std::cout << "participant id is 0. not leaving room\n"; return; }
 		std::cout << "clean_vc_hash\n";
+		participant->set_vc_enabled(0);
 		clean_vc_hash(participant->id);
 		std::cout << "send_room_leave_notifications()\n";
 		send_room_leave_notifications(participant);
@@ -461,11 +453,11 @@ public:
 		}
 		//leave chat room
 		release_id(participant->id);
+		//participant->stop_timers();
 		participant->stop_read_vc_rb();
-		participant->set_vc_enabled(0);
 		participant_map.erase(participant->id);
-		participant->id = 0;//3/26/26
-		
+		participant->id = 0;//3/26/26	
+		std::cout << "room_leave success\n";
 	}
 	void deliver(const chat_message& msg) {
 		recent_msgs_.push_back(msg);
@@ -1185,8 +1177,8 @@ public:
 		size_t total_needed = 2 + size;
 		size_t avail = ma_rb_available_write(&vc_rb);
 		if (ma_rb_available_write(&vc_rb) < total_needed) {
-			std::cout << "write_vc_msg_to_rb: not enough space, avail=" << avail
-				<< " needed=" << total_needed << "\n";
+			//std::cout << "write_vc_msg_to_rb: not enough space, avail=" << avail
+			//	<< " needed=" << total_needed << "\n";
 			return;
 		}
 		/*{
@@ -1213,8 +1205,8 @@ public:
 
 			ma_result r = ma_rb_acquire_write(&vc_rb, &chunk, &p);
 			if (r != MA_SUCCESS || chunk == 0) {
-				std::cout << "write_vc_msg_to_rb: header acquire fail r=" << r
-					<< " chunk=" << chunk << "\n";
+				//std::cout << "write_vc_msg_to_rb: header acquire fail r=" << r
+					//<< " chunk=" << chunk << "\n";
 				return;  // drop packet
 			}
 
@@ -1450,6 +1442,11 @@ public:
 	}
 	void set_feedback_option(bool val) override {
 		feedback = val;
+	}
+	void stop_timers() override {
+		stop_heartbeat();
+		stop_disconnect_timer();
+		stop_shutdown_timer();
 	}
 private:
 	std::string generate_token() {
@@ -1959,6 +1956,11 @@ private:
 		auto self = shared_from_this();
 		t->async_wait([self, t](const boost::system::error_code& ec) { self->heartbeat_ping(ec, t); });
 	}
+	void stop_heartbeat()  {
+		if (heartbeat_timer == nullptr) { return; }
+		heartbeat_timer->cancel();
+	}
+
 	void start_heartbeat() {
 		std::cout << "start_heartbeat()\n";
 		auto self = shared_from_this();
@@ -1966,9 +1968,6 @@ private:
 		heartbeat_timer->async_wait([self, timer](const boost::system::error_code& ec) {
 			self->heartbeat_ping(ec, timer); 
 			});
-	}
-	void stop_heartbeat() {
-		heartbeat_timer->cancel();
 	}
 	void start_shutdown() {
 		auto self = shared_from_this();
@@ -1990,6 +1989,14 @@ private:
 		auto& obj = *self;
 		do_shutdown(obj, self);
 		room_->leave(shared_from_this());
+	}
+	void stop_disconnect_timer() {
+		if (disconnect_timer == nullptr) { return; }
+		disconnect_timer->cancel();
+	}
+	void stop_shutdown_timer() {
+		if (shutdown_timer == nullptr) { return; }
+		shutdown_timer->cancel();
 	}
 	void start_disconnect_timer() {
 		std::cout << "start disconnect timer\n";

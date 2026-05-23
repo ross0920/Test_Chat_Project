@@ -402,10 +402,12 @@ public:
 		}
 		playback_devices_names.clear();
 		playback_devices_names_storage.clear();
+		playback_devices_names.reserve(playback_count);
+		playback_devices_names_storage.reserve(playback_count);
 		for (ma_uint32 i = 0; i < playback_count; i++) {
 			//std::cout << i << ": " << playback_devices[i].name << "\n";
 			playback_devices_names_storage.emplace_back(playback_devices[i].name);
-			playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
+			playback_devices_names.push_back(playback_devices_names_storage[i].data());
 		}
 		if (playback_count > 0) {
 			if (selected_playback >= playback_count) {
@@ -464,10 +466,12 @@ public:
 		}
 		capture_devices_names.clear();
 		capture_devices_names_storage.clear();
+		capture_devices_names.resize(capture_count);
+		capture_devices_names_storage.resize(capture_count);
 		for (ma_uint32 i = 0; i < capture_count; i++) {
 			//std::cout << i << ": " << capture_devices[i].name << "\n";
 			capture_devices_names_storage.emplace_back(capture_devices[i].name);
-			capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
+			capture_devices_names.push_back(capture_devices_names_storage[i].data());
 		}
 		if (capture_count > 0) {
 			if (selected_capture >= capture_count) {
@@ -720,7 +724,6 @@ public:
 		version.encode_header();
 		write_ssl(version);
 	}
-
 	void write_ssl(const chat_message& msg) {
 		boost::asio::post(io_context_,
 			[this, msg]()
@@ -967,7 +970,7 @@ private:
 		chat_message auth;		
 		auth.body_length(key.length());
 		auth.set_message_type(message_type::authentication_response);
-		std::memcpy(auth.body(), key.c_str(), key.length());
+		std::memcpy(auth.body(), key.data(), key.length());
 		auth.encode_header();
 		std::string auth_string = std::string(auth.body(), auth.body_length());
 		//write(auth);
@@ -1995,8 +1998,7 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	std::unordered_map<uint8_t, participant_client_data>::iterator iter = c->participant_client_map.begin();
 	for (; iter != c->participant_client_map.end(); ++iter) {
 		ImGui::PushID(iter->second.p.id);
-		std::string participant_name_label = std::string(iter->second.p.name); //+ "#" + std::to_string(iter->second.p.id);
-		ImGui::Text(participant_name_label.c_str());
+		ImGui::Text(iter->second.p.name.data());
 		ImGui::SameLine();
 		if (ImGui::Checkbox("", &iter->second.enable_vc.first)) {
 			chat_message msg;

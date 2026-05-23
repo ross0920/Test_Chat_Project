@@ -49,6 +49,7 @@ public:
 	virtual void commit_read_rb(size_t size) {};
 	virtual void start_read_vc_rb() {};
 	virtual void stop_read_vc_rb() {};
+	virtual void stop_timers() {};
 	virtual bool get_feedback_option() { return false; };
 	virtual void set_feedback_option(bool val) { }
 	virtual std::unordered_set<uint8_t>* get_vc_partner_ids() {
