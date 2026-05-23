@@ -1061,9 +1061,12 @@ public:
 		vc_partner_ids{},
 		vc_requestor_ids{},
 		vc_enabled{0},
-		heartbeat_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
-		disconnect_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
-		shutdown_timer{ std::make_shared<boost::asio::steady_timer>(io_context)}
+		//heartbeat_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
+		//disconnect_timer{std::make_shared<boost::asio::steady_timer>(io_context)},
+		//shutdown_timer{ std::make_shared<boost::asio::steady_timer>(io_context)}
+		heartbeat_timer{ io_context },
+		disconnect_timer{io_context},
+		shutdown_timer{io_context}
 	{
 	}
 	std::unordered_set<uint8_t>* get_vc_partner_ids() override {
@@ -1947,10 +1950,9 @@ private:
 			}
 		);
 	}
-	void heartbeat_ping(const boost::system::error_code& e,
-		std::shared_ptr<boost::asio::steady_timer> t) {
+	void heartbeat_ping(const boost::system::error_code& e) {
 		if (e == boost::asio::error::operation_aborted) { return; }
-		t->expires_after(boost::asio::chrono::seconds(20));
+		heartbeat_timer.expires_after(boost::asio::chrono::seconds(20));
 		std::cout << "heartbeat_ping\n";
 		chat_message m;
 		m.set_message_type(message_type::heartbeat);
@@ -1959,35 +1961,40 @@ private:
 		m.encode_header();
 		deliver(m);
 		auto self = shared_from_this();
-		t->async_wait([self, t](const boost::system::error_code& ec) { self->heartbeat_ping(ec, t); });
+		heartbeat_timer.async_wait([weak = std::weak_ptr(self)](const boost::system::error_code& ec) {
+			if (auto self = weak.lock()) {
+				self->heartbeat_ping(ec);
+			}}
+		);
 	}
 	void stop_heartbeat()  {
-		if (heartbeat_timer == nullptr) { return; }
-		heartbeat_timer->cancel();
+		heartbeat_timer.cancel();
 	}
 
 	void start_heartbeat() {
 		std::cout << "start_heartbeat()\n";
 		auto self = shared_from_this();
-		auto timer = heartbeat_timer;
-		heartbeat_timer->async_wait([self, timer](const boost::system::error_code& ec) {
-			self->heartbeat_ping(ec, timer); 
+		//auto timer = heartbeat_timer;
+		heartbeat_timer.async_wait([weak = std::weak_ptr(self)](const boost::system::error_code& ec) {
+			if (auto self = weak.lock()) {
+				self->heartbeat_ping(ec);
+			}
 			});
 	}
 	void start_shutdown() {
 		auto self = shared_from_this();
-		auto timer = shutdown_timer;
-		shutdown_timer->expires_after(boost::asio::chrono::seconds(10));
-		shutdown_timer->async_wait([self, timer](const boost::system::error_code& ec) {
-			self->do_shutdown(*self, self);
+		shutdown_timer.expires_after(boost::asio::chrono::seconds(10));
+		shutdown_timer.async_wait([weak = std::weak_ptr(self)](const boost::system::error_code& ec) {
+			if (auto self = weak.lock()) {
+				self->do_shutdown(*self, self);
+			}
 			});
 	}
 	void reset_disconnect(chat_message& m) {
 		std::cout << "reset_disconnect\n";
-		disconnect_timer->expires_after(std::chrono::seconds(60));
+		disconnect_timer.expires_after(std::chrono::seconds(60));
 	}
-	void disconnect(const boost::system::error_code& e,
-		std::shared_ptr<boost::asio::steady_timer> t) {
+	void disconnect(const boost::system::error_code& e) {
 		if (e == boost::asio::error::operation_aborted) { return; }
 		std::cout << "disconnect trigger\n";
 		auto self = shared_from_this();
@@ -1996,20 +2003,19 @@ private:
 		room_->leave(shared_from_this());
 	}
 	void stop_disconnect_timer() {
-		if (disconnect_timer == nullptr) { return; }
-		disconnect_timer->cancel();
+		disconnect_timer.cancel();
 	}
 	void stop_shutdown_timer() {
-		if (shutdown_timer == nullptr) { return; }
-		shutdown_timer->cancel();
+		shutdown_timer.cancel();
 	}
 	void start_disconnect_timer() {
 		std::cout << "start disconnect timer\n";
-		disconnect_timer->expires_after(std::chrono::seconds(60));
+		disconnect_timer.expires_after(std::chrono::seconds(60));
 		auto self = shared_from_this();
-		auto timer = disconnect_timer;
-		disconnect_timer->async_wait([self, timer](const boost::system::error_code& ec) {
-			self->disconnect(ec, timer);
+		disconnect_timer.async_wait([weak = std::weak_ptr(self)](const boost::system::error_code& ec) {
+			if (auto self = weak.lock()) {
+				self->disconnect(ec);
+			}
 		});
 	}
 	boost::asio::ssl::stream<tcp::socket> ssl_socket_;
@@ -2029,9 +2035,13 @@ private:
 	ma_rb vc_rb;
 	boost::asio::io_context& io_context;
 	uint8_t vc_room_id;
-	std::shared_ptr<boost::asio::steady_timer> heartbeat_timer;
-	std::shared_ptr<boost::asio::steady_timer> disconnect_timer;
-	std::shared_ptr<boost::asio::steady_timer> shutdown_timer;
+	//std::shared_ptr<boost::asio::steady_timer> heartbeat_timer;
+	boost::asio::steady_timer heartbeat_timer;
+	//std::shared_ptr<boost::asio::steady_timer> disconnect_timer;
+	boost::asio::steady_timer disconnect_timer;
+	//std::shared_ptr<boost::asio::steady_timer> shutdown_timer;
+	boost::asio::steady_timer shutdown_timer;
+
 };
 class chat_server {
 public:
