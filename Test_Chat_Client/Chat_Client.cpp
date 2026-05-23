@@ -938,7 +938,7 @@ private:
 		}
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
-		std::memcpy(pOut, pcm_out, bytes_to_write);
+		std::memcpy(pOut, pcm_out.data(), bytes_to_write);
 		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
 	}
 	std::shared_ptr<boost::asio::steady_timer> retry_read_capture_timer;
