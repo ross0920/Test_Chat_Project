@@ -912,6 +912,13 @@ private:
 		if (decoded_frames <= 0) {
 			return;
 		}
+		size_t avail = ma_pcm_rb_available_write(&stream.playback_rb);
+		size_t needed = decoded_frames;
+
+		if (avail < needed) {
+			// drop oldest audio to keep latency bounded
+			ma_pcm_rb_seek_read(&stream.playback_rb, needed - avail);
+		}
 		ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
 		ma_uint32 frames_written = frames_to_write;
 		void* pOut = nullptr;
