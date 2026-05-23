@@ -402,12 +402,10 @@ public:
 		}
 		playback_devices_names.clear();
 		playback_devices_names_storage.clear();
-		playback_devices_names.reserve(playback_count);
-		playback_devices_names_storage.reserve(playback_count);
 		for (ma_uint32 i = 0; i < playback_count; i++) {
 			//std::cout << i << ": " << playback_devices[i].name << "\n";
 			playback_devices_names_storage.emplace_back(playback_devices[i].name);
-			playback_devices_names.push_back(playback_devices_names_storage[i].data());
+			playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
 		}
 		if (playback_count > 0) {
 			if (selected_playback >= playback_count) {
@@ -466,12 +464,10 @@ public:
 		}
 		capture_devices_names.clear();
 		capture_devices_names_storage.clear();
-		capture_devices_names.resize(capture_count);
-		capture_devices_names_storage.resize(capture_count);
 		for (ma_uint32 i = 0; i < capture_count; i++) {
 			//std::cout << i << ": " << capture_devices[i].name << "\n";
 			capture_devices_names_storage.emplace_back(capture_devices[i].name);
-			capture_devices_names.push_back(capture_devices_names_storage[i].data());
+			capture_devices_names.push_back(capture_devices_names_storage[i].c_str());
 		}
 		if (capture_count > 0) {
 			if (selected_capture >= capture_count) {

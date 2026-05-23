@@ -451,10 +451,14 @@ public:
 		if (it != tokens.end()) {
 			tokens.erase(participant->id);
 		}
+		std::cout << "token erased\n";
 		//leave chat room
 		release_id(participant->id);
-		//participant->stop_timers();
+		std::cout << "release_id()\n";
+		participant->stop_timers();
+		std::cout << "stop_timers\n";
 		participant->stop_read_vc_rb();
+		std::cout << "stop_read_vc_rb\n";
 		participant_map.erase(participant->id);
 		participant->id = 0;//3/26/26	
 		std::cout << "room_leave success\n";
@@ -1327,11 +1331,12 @@ public:
 	}
 	void stop_read_vc_rb() override {
 		running_vc = false;
-		uninit_rb();
+		//uninit_rb();
 	}
 	void read_vc_rb() override {
 		if (!running_vc) {
 			std::cout << "read_vc_rb: !running_vc, returning\n";
+			uninit_rb();
 			return;
 		}
 		std::cout << "read_vc_rb: attempting packet\n";
