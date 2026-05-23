@@ -351,6 +351,7 @@ public:
 		capture_temp_buffer.resize(frame_size * playback_device.playback.channels);
 		bytes_per_sample_playback = ma_get_bytes_per_sample(network_format);
 		bytes_per_frame_playback = ma_get_bytes_per_frame(network_format, network_channels);
+		period_size_frames_playback = playback_device.playback.internalPeriodSizeInFrames;
 	}
 	void initialize_encoder() {
 		int err = 0;
@@ -609,6 +610,7 @@ public:
 	std::vector<float>capture_temp_buffer;
 	ma_uint32 bytes_per_sample_playback;
 	ma_uint32 bytes_per_frame_playback;
+	ma_uint32 period_size_frames_playback;
 	ma_uint32 bytes_per_sample_capture;
 	ma_uint32 bytes_per_frame_capture;
 	chat_client* c;
@@ -900,13 +902,14 @@ private:
 			return;
 		}
 		rbs& stream = audio_ctx.vc_streams.at(sender_id);
-		float pcm_out[5760];
+		const ma_uint32 period_size = audio_ctx.period_size_frames_playback;		
+		std::vector<float> pcm_out(period_size);
 		int decoded_frames = opus_decode_float(
 			stream.decoder,
 			opus_packet,
 			(opus_int32)ct_len,
-			pcm_out,
-			5760,
+			pcm_out.data(),
+			period_size,
 			0
 		);
 		if (decoded_frames <= 0) {
