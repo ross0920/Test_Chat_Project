@@ -74,7 +74,9 @@ const uint8_t max_participants = 16;
 constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
 constexpr float sample_rate = 48000.0f;
-constexpr ma_uint32 frame_size = 960;
+ma_uint32 SAMPLE_RATE = 48000;
+constexpr int CHANNELS = 1;
+constexpr ma_uint32 FRAME_SIZE = 960;
 const std::string client_version = "1.0";
 const std::string ip = "159.89.49.248";
 const std::string port = "5000";
@@ -236,12 +238,19 @@ public:
 		for (size_t f = 0; f < frame_count; ++f) {
 			const float* in_frame = src + f * in_channels;
 			float mono_value = in_frame[0] * gain;
-			if (mono_value > db_threshold) {
+			if (db_threshold > 0.0f) {
+				float limit = db_threshold;
+				mono_value = limit * tanh(mono_value / limit);
+			}
+			else {
+				mono_value = 0;
+			}
+			/*if (mono_value > db_threshold) {
 				mono_value = db_threshold;
 			}
 			if (mono_value < -db_threshold) {
 				mono_value = -db_threshold;
-			}
+			}*/
 			float* out_frame = dst + f * out_channels;
 			if (in_channels == 1) {
 				for (uint32_t c = 0; c < out_channels; ++c) {
@@ -257,8 +266,70 @@ public:
 		}
 	}
 };
+inline float hermite(float y0, float y1, float y2, float y3, float t)
+{
+	float c0 = y1;
+	float c1 = 0.5f * (y2 - y0);
+	float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+	float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+	return ((c3 * t + c2) * t + c1) * t + c0;
+}
+struct SimpleResampler {
+	float prev2 = 0.0f;
+	float prev1 = 0.0f;
+	float  lastSample = 0.0f;  // previous input sample
+	double phase = 0.0;   // fractional position between lastSample and current
+	double ratio = 1.0;   // output_rate / input_rate (or your drift ratio)
+	bool   primed = false; // have we seen at least one sample yet?
+};
+size_t simple_resample(
+	SimpleResampler& r,
+	const float* in, size_t inFrames,
+	size_t& inConsumed,
+	float* out, size_t outCap)
+{
+	size_t outFrames = 0;
+	size_t idx = 0;
 
-class rbs {
+	inConsumed = 0;
+
+	if (inFrames == 0 || outCap == 0)
+		return 0;
+
+	// Prime with the first sample on first call.
+	if (!r.primed) {
+		r.prev2 = in[0];
+		r.prev1 = in[0];
+		idx = 1;
+		inFrames -= 1;
+		r.primed = true;
+	}
+
+	while (inFrames > 0 && outFrames < outCap) {
+		float y2 = in[idx];
+		float y3 = (idx + 1 < inFrames) ? in[idx + 1] : y2;
+
+		while (r.phase < 1.0 && outFrames < outCap) {
+			float t = (float)r.phase;
+			float y = hermite(r.prev2, r.prev1, y2, y3, t);
+			out[outFrames++] = y;
+			r.phase += r.ratio;
+		}
+
+		if (r.phase >= 1.0) {
+			r.phase -= 1.0;
+
+			r.prev2 = r.prev1;
+			r.prev1 = y2;
+
+			++idx;
+			--inFrames;
+		}
+	}
+
+	inConsumed = idx;
+	return outFrames;
+}class rbs {
 public:
 	ma_rb capture_rb;
 	ma_pcm_rb playback_rb;
@@ -268,9 +339,10 @@ public:
 	ma_format network_format;
 	ma_uint32 network_channels;
 	OpusDecoder* decoder;
+	SimpleResampler resampler;
 
 	rbs(ma_device& capture_device, ma_device& playback_device, ma_format network_format, ma_uint32 network_channels) : size{},
-	network_format{network_format}, network_channels{network_channels}, decoder{nullptr}
+		network_format{ network_format }, network_channels{ network_channels }, decoder{ nullptr }, resampler{}
 	{
 		init_playback_rb(playback_device);
 		initialize_decoder();
@@ -285,7 +357,6 @@ public:
 			&error
 		);
 	}
-
 	bool init_capture_rb(ma_device& capture_device) {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
@@ -346,12 +417,12 @@ public:
 		init_capture();
 		init_playback();
 		if (!playback_init || !capture_init) { return; }
-		mix_buffer.resize(frame_size * playback_device.playback.channels);
-		playback_temp_buffer.resize(frame_size * playback_device.playback.channels);
-		capture_temp_buffer.resize(frame_size * playback_device.playback.channels);
+		mix_buffer.resize(FRAME_SIZE * playback_device.playback.channels);
+		playback_temp_buffer.resize(FRAME_SIZE * playback_device.playback.channels);
+		capture_temp_buffer.resize(FRAME_SIZE * playback_device.playback.channels);
 		bytes_per_sample_playback = ma_get_bytes_per_sample(network_format);
 		bytes_per_frame_playback = ma_get_bytes_per_frame(network_format, network_channels);
-		period_size_frames_playback = playback_device.playback.internalPeriodSizeInFrames;
+		std::cout << "period_size_frames " << period_size_frames_playback << "\n";
 	}
 	void initialize_encoder() {
 		int err = 0;
@@ -603,14 +674,16 @@ public:
 	OpusDecoder* decoder;
 	ma_pcm_rb capture_ring_buffer;
 	std::unordered_map<uint8_t, rbs> vc_streams;
-	float input_float[frame_size]{};
+	float input_float[FRAME_SIZE]{};
 	uint8_t packet[4096]{};
 	std::vector<float>mix_buffer;
 	std::vector<float>playback_temp_buffer;
 	std::vector<float>capture_temp_buffer;
+	float encode_buffer[FRAME_SIZE];
+	size_t encode_filled = 0;
 	ma_uint32 bytes_per_sample_playback;
 	ma_uint32 bytes_per_frame_playback;
-	ma_uint32 period_size_frames_playback;
+	const ma_uint32 period_size_frames_playback = 960;
 	ma_uint32 bytes_per_sample_capture;
 	ma_uint32 bytes_per_frame_capture;
 	chat_client* c;
@@ -761,12 +834,104 @@ public:
 	}
 	void check_and_send_test() {
 		if (!audio_ctx.running_capture) { return; }
+		ma_uint32 frames_to_read = FRAME_SIZE;
+		void* pOut = nullptr;
 		ma_result result;
-		ma_uint32 frames_to_read = frame_size;
+		result = ma_pcm_rb_acquire_read(&audio_ctx.capture_ring_buffer, &frames_to_read, &pOut);
+		if (result != MA_SUCCESS || frames_to_read == 0) {
+			return;
+		}
+		const float* pcm = (const float*)pOut;
+		ma_uint32 consumed = 0;
+		while (consumed < frames_to_read) {
+			ma_uint32 can_copy = (ma_uint32)std::min(
+				(size_t)(frames_to_read - consumed),
+				FRAME_SIZE - audio_ctx.encode_filled
+			);
+
+			std::memcpy(audio_ctx.encode_buffer + audio_ctx.encode_filled,
+				pcm + consumed, can_copy * sizeof(float));
+
+			audio_ctx.encode_filled += can_copy;
+			consumed += can_copy;
+				
+			if (audio_ctx.encode_filled == FRAME_SIZE) {
+				unsigned char opus_packet[4000];
+				int encoded_bytes = opus_encode_float(
+					audio_ctx.encoder,
+					audio_ctx.encode_buffer,
+					//frames_to_read,
+					FRAME_SIZE,
+					opus_packet,
+					sizeof(opus_packet)
+				);
+				if (encoded_bytes <= 0) {
+					ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, consumed);
+					return;
+				}
+
+				uint8_t nonce[12];
+				build_nonce(audio_ctx.iv_base, audio_ctx.send_counter, nonce);
+
+				uint8_t ciphertext[4000];
+				uint8_t tag[16];
+
+				std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
+				uint16_t body_len = (uint16_t)(4 + encoded_bytes + 16);
+				m->encode_header(session_token, body_len, vc_room_id, me.id);
+				const uint8_t* aad = (const uint8_t*)m->data();
+				int aad_len = m->header_length;
+				std::string header = std::string((char*)aad, aad_len);
+				if (!aes_gcm_encrypt(
+					audio_ctx.session_key.data(),
+					nonce,
+					opus_packet,
+					encoded_bytes,
+					aad,
+					aad_len,
+					ciphertext,
+					tag
+				)) {
+					ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, consumed);
+					return;
+				}
+				uint8_t* body = (uint8_t*)m->body();
+				std::memcpy(body, &audio_ctx.send_counter, 4);
+				std::memcpy(body + 4, ciphertext, encoded_bytes);
+				std::memcpy(body + 4 + encoded_bytes, tag, 16);
+
+				audio_ctx.send_counter++;
+				auto buffer = boost::asio::buffer(m->data(), m->length());
+				auto self = shared_from_this();
+				audio_ctx.encode_filled = 0;
+				ma_pcm_rb_commit_read(&self->audio_ctx.capture_ring_buffer, consumed);
+				udp_socket->async_send_to(buffer, server_endpoint,
+					[this, self, /*size*/consumed](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
+						if (!ec) {
+						}
+						else {
+							udp_socket->close();
+						}
+					}
+				);
+				return;
+			}
+
+		}
+		ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, frames_to_read);
+		return;	
+	}
+	
+
+	void check_and_send_test_old() {
+		if (!audio_ctx.running_capture) { return; }
+
+		ma_result result;
+		ma_uint32 frames_to_read = FRAME_SIZE;
 		void* pOut = nullptr;
 		result = ma_pcm_rb_acquire_read(&audio_ctx.capture_ring_buffer, &frames_to_read, &pOut);
 		if (result == MA_SUCCESS && /*size*/ frames_to_read > 0) {
-			ma_uint32 bytes_per_frame = ma_get_bytes_per_frame(
+			/*ma_uint32 bytes_per_frame = ma_get_bytes_per_frame(
 				audio_ctx.network_format,
 				audio_ctx.network_channels);
 			size_t pcm_bytes = frames_to_read * bytes_per_frame;
@@ -774,13 +939,14 @@ public:
 				pcm_bytes = max_playback_size;
 				frames_to_read = (ma_uint32)(pcm_bytes / bytes_per_frame);
 				pcm_bytes = frames_to_read * bytes_per_frame;
-			}
+			}*/
 			const float* pcm = (const float*)pOut;
 			unsigned char opus_packet[4000];
 			int encoded_bytes = opus_encode_float(
 				audio_ctx.encoder,
 				pcm,
-				frames_to_read,
+				//frames_to_read,
+				FRAME_SIZE,
 				opus_packet,
 				sizeof(opus_packet)
 			);
@@ -887,7 +1053,9 @@ private:
 		int aad_len = read_vc_msg_->header_length;
 		std::string header = std::string((char*)aad, aad_len);
 		uint8_t opus_packet[4000];
-
+		if (ct_len > sizeof(opus_packet)) {
+			return;
+		}
 		if (!aes_gcm_decrypt(
 			audio_ctx.session_key.data(),
 			nonce,
@@ -902,41 +1070,74 @@ private:
 			return;
 		}
 		rbs& stream = audio_ctx.vc_streams.at(sender_id);
-		const ma_uint32 period_size = audio_ctx.period_size_frames_playback;		
-		std::vector<float> pcm_out(period_size);
+		std::vector<float> pcm_out(FRAME_SIZE);
 		int decoded_frames = opus_decode_float(
 			stream.decoder,
 			opus_packet,
 			(opus_int32)ct_len,
 			pcm_out.data(),
-			period_size,
+			FRAME_SIZE,
 			0
 		);
 		if (decoded_frames <= 0) {
 			return;
 		}
-
-		if (decoded_frames < period_size) {
-			std::memset(pcm_out.data() + decoded_frames, 0, (period_size - decoded_frames) * sizeof(float));
-			decoded_frames = period_size;
+		if (decoded_frames < FRAME_SIZE) {
+			std::memset(pcm_out.data() + decoded_frames, 0, (FRAME_SIZE - decoded_frames) * sizeof(float));
+			decoded_frames = FRAME_SIZE;
 		}
-
-		ma_uint32 max_frames = period_size * 5;
+		ma_uint32 max_frames = FRAME_SIZE * 10;
 		ma_uint32 readable = ma_pcm_rb_available_read(&stream.playback_rb);
-
 		if (readable > max_frames) {
 			ma_pcm_rb_seek_read(&stream.playback_rb, readable - max_frames);
 		}
 
+		SimpleResampler& rs = stream.resampler; 
+		const ma_uint32 target = FRAME_SIZE * 3;
+		ma_uint32 rb = ma_pcm_rb_available_read(&stream.playback_rb);
+
+		double error = (double)rb - (double)target;
+
+		double target_ratio = 1.0 + error * 0.0000005;
+		target_ratio = std::clamp(target_ratio, 0.98, 1.02);
+		rs.ratio += (target_ratio - rs.ratio) * 0.001;
+
+		float converted[FRAME_SIZE * 4];
+		size_t in_consumed = 0;
+		ma_uint64 in_frames = decoded_frames;
+		rs.phase = 0.0;
+		ma_uint64 out_frames = simple_resample(
+			rs,
+			pcm_out.data(), static_cast<size_t>(in_frames),
+			in_consumed,
+			converted, FRAME_SIZE * 4
+		);
+
 		size_t avail = ma_pcm_rb_available_write(&stream.playback_rb);
-		size_t needed = decoded_frames;
-
+		size_t needed = out_frames;
 		if (avail < needed) {
-			// drop oldest audio to keep latency bounded
-			ma_pcm_rb_seek_read(&stream.playback_rb, needed - avail);
+			size_t drop = needed - avail;
+			drop -= drop % FRAME_SIZE; 
+			ma_pcm_rb_seek_read(&stream.playback_rb, drop);
 		}
+		ma_uint32 frames_to_write = (ma_uint32)out_frames;
+		ma_uint32 frames_written = frames_to_write;
+		void* pOut = nullptr;
+		ma_result result = ma_pcm_rb_acquire_write(
+			&stream.playback_rb,
+			&frames_written,
+			&pOut
+		);
+		if (result != MA_SUCCESS || frames_written == 0) {
+			//std::cout << "frames_written == " << frames_written << "\n";
+			return;
+		}
+		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
+		size_t bytes_to_write = frames_written * bpf;
+		std::memcpy(pOut, converted, bytes_to_write);
+		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
 
-		ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
+		/*ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
 		ma_uint32 frames_written = frames_to_write;
 		void* pOut = nullptr;
 		ma_result result = ma_pcm_rb_acquire_write(
@@ -953,7 +1154,7 @@ private:
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
 		std::memcpy(pOut, pcm_out.data(), bytes_to_write); 
-		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
+		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);*/
 	}
 	std::shared_ptr<boost::asio::steady_timer> retry_read_capture_timer;
 	void add_participants(chat_message& m) {
@@ -1683,7 +1884,7 @@ private:
 		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ udp_port_number))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() },
-		audio_ctx{frame_size, sample_rate, this},
+		audio_ctx{FRAME_SIZE, sample_rate, this},
 		me(), steady_timer_{io_context}, send_timer_{std::make_shared<boost::asio::steady_timer>(io_context)}
 	{	
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
@@ -2165,8 +2366,6 @@ void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_clien
 
 	glfwSwapBuffers(window);
 }
-constexpr int SAMPLE_RATE = 48000;
-constexpr int CHANNELS = 1;
 
 
 /*class SpectralSuppressor {
