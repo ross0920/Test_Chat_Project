@@ -1960,6 +1960,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 					ImGui::EndMenu();
 				}
 				ImGui::EndMenu();
+				//
 			}
 			if (ImGui::MenuItem("Exit")) {
 				glfwSetWindowShouldClose(window, 1);

@@ -32,6 +32,6 @@ set(CPACK_PACKAGE_NAME "Test_Chat_Client")
 set(CPACK_PACKAGE_VERSION "1.0.0")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Test_Chat_Client")
 include(CPack)
-endif()
+endif() 
 #find_package(Boost REQUIRED COMPONENTS chrono)
 
