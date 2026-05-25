@@ -73,7 +73,7 @@ std::chrono::duration<double> delta_time = std::chrono::duration<double>(0.0f);
 const uint8_t max_participants = 16;
 constexpr size_t packet_size = 512;
 constexpr size_t packet_count = 64;
-constexpr float sample_rate = 48000.0f;
+//constexpr float sample_rate = 48000.0f;
 ma_uint32 SAMPLE_RATE = 48000;
 constexpr int CHANNELS = 1;
 constexpr ma_uint32 FRAME_SIZE = 960;
@@ -352,7 +352,7 @@ public:
 	void initialize_decoder() {
 		int error = 0;
 		decoder = opus_decoder_create(
-			48000,
+			SAMPLE_RATE,
 			network_channels,
 			&error
 		);
@@ -360,7 +360,7 @@ public:
 	bool init_capture_rb(ma_device& capture_device) {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
-		subBufferSizeInFrames = 48000;
+		subBufferSizeInFrames = SAMPLE_RATE;
 		ma_result result;
 		result = ma_rb_init(subBufferSizeInFrames /** bpf*/, NULL, NULL, &capture_rb);
 		if (result != MA_SUCCESS) {
@@ -427,7 +427,7 @@ public:
 	void initialize_encoder() {
 		int err = 0;
 		encoder = opus_encoder_create(
-			48000,
+			SAMPLE_RATE,
 			network_channels,
 			OPUS_APPLICATION_VOIP,
 			&err
@@ -604,7 +604,7 @@ public:
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames;
 		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
-		bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
+		//bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
 		ma_result result;
 		result = ma_pcm_rb_init(network_format, network_channels, subBufferSizeInFrames, NULL, NULL, &capture_ring_buffer);
 		if (result != MA_SUCCESS) {
@@ -856,7 +856,8 @@ public:
 			consumed += can_copy;
 				
 			if (audio_ctx.encode_filled == FRAME_SIZE) {
-				unsigned char opus_packet[4000];
+				//unsigned char opus_packet[4000];
+				unsigned char opus_packet[1500];
 				int encoded_bytes = opus_encode_float(
 					audio_ctx.encoder,
 					audio_ctx.encode_buffer,
@@ -1881,10 +1882,10 @@ private:
 		boost::asio::ssl::context& ssl_context,
 		const tcp::resolver::results_type& endpoints, GLFWwindow* window)
 		: io_context_(io_context), ssl_context_(ssl_context), socket_(std::make_shared<tcp::socket>(io_context)),
-		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), /*0*/ udp_port_number))), window(window), endpoints(endpoints),
+		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), udp_port_number))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() },
-		audio_ctx{FRAME_SIZE, sample_rate, this},
+		audio_ctx{FRAME_SIZE, SAMPLE_RATE, this},
 		me(), steady_timer_{io_context}, send_timer_{std::make_shared<boost::asio::steady_timer>(io_context)}
 	{	
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
