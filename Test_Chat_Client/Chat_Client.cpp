@@ -71,19 +71,19 @@ std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::
 std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 std::chrono::duration<double> delta_time = std::chrono::duration<double>(0.0f);
 const uint8_t max_participants = 16;
-constexpr size_t packet_size = 512;
-constexpr size_t packet_count = 64;
-//constexpr float sample_rate = 48000.0f;
 ma_uint32 SAMPLE_RATE = 48000;
 constexpr int CHANNELS = 1;
 constexpr ma_uint32 FRAME_SIZE = 960;
+ma_format NETWORK_FORMAT = ma_format_f32;
+ma_uint32 NETWORK_CHANNELS = 1;
+
 const std::string client_version = "1.0";
 const std::string ip = "159.89.49.248";
 const std::string port = "5000";
 
 
-const size_t max_playback_size = 3840;
-const int buffer_size = 38400; //19200;
+//const size_t max_playback_size = 3840;
+//const int buffer_size = 38400; //19200;
 float db_threshold = 1.0f;
 
 ma_device_info* capture_devices;
@@ -332,51 +332,31 @@ size_t simple_resample(
 	return outFrames;
 }class rbs {
 public:
-	ma_rb capture_rb;
 	ma_pcm_rb playback_rb;
-	ma_uint32 bytes_per_frame;
-	ma_uint32 bytes_per_sample;
 	size_t size;
-	ma_format network_format;
-	ma_uint32 network_channels;
 	OpusDecoder* decoder;
 	SimpleResampler resampler;
 
-	rbs(ma_device& capture_device, ma_device& playback_device, ma_format network_format, ma_uint32 network_channels) : size{},
-		network_format{ network_format }, network_channels{ network_channels }, decoder{ nullptr }, resampler{}
+	rbs(ma_device& capture_device, ma_device& playback_device) : size{},
+		decoder{ nullptr }, resampler{}
 	{
 		init_playback_rb(playback_device);
 		initialize_decoder();
-		bytes_per_frame = ma_get_bytes_per_frame(playback_rb.format,playback_rb.channels);
-		bytes_per_sample = ma_get_bytes_per_sample(playback_rb.format);
 	}
 	void initialize_decoder() {
 		int error = 0;
 		decoder = opus_decoder_create(
 			SAMPLE_RATE,
-			network_channels,
+			NETWORK_CHANNELS,
 			&error
 		);
-	}
-	bool init_capture_rb(ma_device& capture_device) {
-		ma_uint32 bpf;
-		ma_uint32 subBufferSizeInFrames;
-		subBufferSizeInFrames = SAMPLE_RATE;
-		ma_result result;
-		result = ma_rb_init(subBufferSizeInFrames /** bpf*/, NULL, NULL, &capture_rb);
-		if (result != MA_SUCCESS) {
-			std::cout << "Failed to initialize capture ring buffer\n";
-			return false;
-		}
-		return true;
 	}
 	bool init_playback_rb(ma_device& playback_device) {
 		ma_uint32 bpf;
 		ma_uint32 subBufferSizeInFrames = playback_device.playback.internalPeriodSizeInFrames * 5;
 		bpf = ma_get_bytes_per_frame(playback_device.playback.format, playback_device.playback.channels);
-		//ma_uint32 subBufferSizeInFrames = 48000; larger buffer causing more latency
 		ma_result result;
-		result = ma_pcm_rb_init(network_format, network_channels, subBufferSizeInFrames * bpf,
+		result = ma_pcm_rb_init(NETWORK_FORMAT, NETWORK_CHANNELS, subBufferSizeInFrames * bpf,
 			NULL, NULL, &playback_rb);
 		if (result != MA_SUCCESS) {
 			std::cout << "Failed to initialize playback ring buffer\n";
@@ -384,29 +364,23 @@ public:
 		}
 		return true;
 	}
-	void uninit_capture_rb() {
-		ma_rb_uninit(&capture_rb);
-	}
 	void uninit_playback_rb() {
 		ma_pcm_rb_uninit(&playback_rb);
 	}
 };
 class Audio_Context {
 public:
-	Audio_Context(size_t frame_size, float sample_rate, chat_client* c_) : speaking{ false },
+	Audio_Context(size_t frame_size, chat_client* c_) : speaking{ false },
 		current_gain{ 1.0f }, gain{ 20.0f }, noise_profile{ frame_size },
 		silence_frames{ 0 }, hangover_duration{ 10 }, fading_out{ false },
 		fade_index{ 0 }, fade_duration{ 30 }, rms_smoothed{ 0.0f },
-		//spectral_suppressor{ frame_size },
 		encoder{ nullptr }, decoder{ nullptr },
 		hp_filter{},
 		lp_filter{},
 		sound_controls{},
 		c{c_},
 		capture_temp_buffer{},
-		playback_temp_buffer{},
-		network_format{ma_format_f32},
-		network_channels{1}
+		playback_temp_buffer{}
 	{
 		if (c == nullptr) { /*std::cout << "audio context c = nullptr\n";*/ }
 		else { /*std::cout << "audio context not nullptr\n";*/ }
@@ -420,15 +394,15 @@ public:
 		if (!playback_init || !capture_init) { return; }
 		mix_buffer.resize(FRAME_SIZE * playback_device.playback.channels);
 		playback_temp_buffer.resize(FRAME_SIZE * playback_device.playback.channels);
-		capture_temp_buffer.resize(FRAME_SIZE * playback_device.playback.channels);
-		bytes_per_sample_playback = ma_get_bytes_per_sample(network_format);
-		bytes_per_frame_playback = ma_get_bytes_per_frame(network_format, network_channels);
+		capture_temp_buffer.resize(FRAME_SIZE * capture_device.capture.channels);
+		bytes_per_sample_playback = ma_get_bytes_per_sample(NETWORK_FORMAT);
+		bytes_per_frame_playback = ma_get_bytes_per_frame(NETWORK_FORMAT, NETWORK_CHANNELS);
 	}
 	void initialize_encoder() {
 		int err = 0;
 		encoder = opus_encoder_create(
 			SAMPLE_RATE,
-			network_channels,
+			NETWORK_CHANNELS,
 			OPUS_APPLICATION_VOIP,
 			&err
 		);
@@ -465,8 +439,6 @@ public:
 		playback_init = true;
 		ma_result result;
 		ma_device_config deviceConfigPlayback;
-		//ma_device_info* playback_devices;
-		//ma_uint32 playback_count;
 		result = ma_context_get_devices(&playback_context, &playback_devices, &playback_count, NULL, NULL);
 		if (result != MA_SUCCESS) {
 			std::cout << "Failed to get capture devices\n";
@@ -475,22 +447,18 @@ public:
 		playback_devices_names.clear();
 		playback_devices_names_storage.clear();
 		for (ma_uint32 i = 0; i < playback_count; i++) {
-			//std::cout << i << ": " << playback_devices[i].name << "\n";
 			playback_devices_names_storage.emplace_back(playback_devices[i].name);
 			playback_devices_names.push_back(playback_devices_names_storage[i].c_str());
 		}
 		if (playback_count > 0) {
 			if (selected_playback >= playback_count) {
-				//std::cout << "selected_playback >= playback_count\n";
 				return -1;
 			}
-			//std::cout << "selecting " << playback_devices[selected_playback].name << "\n";
 		}
 		deviceConfigPlayback = ma_device_config_init(ma_device_type_playback);
-		deviceConfigPlayback.playback.format = network_format;
+		deviceConfigPlayback.playback.format = NETWORK_FORMAT;
 		deviceConfigPlayback.playback.pDeviceID = &playback_devices[selected_playback].id;
 		deviceConfigPlayback.dataCallback = playback_callback;
-		//deviceConfigPlayback.pUserData = &ma_context_;
 		deviceConfigPlayback.pUserData = this;
 
 		result = ma_device_init(NULL, &deviceConfigPlayback, &playback_device);
@@ -543,16 +511,13 @@ public:
 		}
 		if (capture_count > 0) {
 			if (selected_capture >= capture_count) {
-				//std::cout << "selected_capture >= capture count\n";
 				return -1;
 			}
-			//std::cout << "selecting " << capture_devices[selected_capture].name << "\n";
 		}
 		deviceConfigCapture = ma_device_config_init(ma_device_type_capture);
-		deviceConfigCapture.capture.format = network_format;
+		deviceConfigCapture.capture.format = NETWORK_FORMAT;
 		deviceConfigCapture.capture.pDeviceID = &capture_devices[selected_capture].id;
 		deviceConfigCapture.dataCallback = capture_callback;
-		//deviceConfigCapture.pUserData = &ma_context_;
 		deviceConfigCapture.pUserData = this;
 
 		result = ma_device_init(NULL, &deviceConfigCapture, &capture_device);
@@ -606,7 +571,7 @@ public:
 		subBufferSizeInFrames = capture_device.capture.internalPeriodSizeInFrames * 5;
 		//bpf = ma_get_bytes_per_frame(capture_device.capture.format, capture_device.capture.channels);
 		ma_result result;
-		result = ma_pcm_rb_init(network_format, network_channels, subBufferSizeInFrames, NULL, NULL, &capture_ring_buffer);
+		result = ma_pcm_rb_init(NETWORK_FORMAT, NETWORK_CHANNELS, subBufferSizeInFrames, NULL, NULL, &capture_ring_buffer);
 		if (result != MA_SUCCESS) {
 			std::cout << "Failed to initialize capture ring buffer\n";
 			return false;
@@ -616,9 +581,7 @@ public:
 	void reinit_vc_streams() {
 		auto iter = vc_streams.begin();
 		for (; iter != vc_streams.end(); ++iter) {
-			//iter->second.uninit_capture_rb();
 			iter->second.uninit_playback_rb();
-			iter->second.init_capture_rb(capture_device);
 			iter->second.init_playback_rb(playback_device);
 		}
 	}
@@ -631,7 +594,7 @@ public:
 	void add_stream(chat_message& m) {
 		uint8_t partner_id = 0;
 		std::memcpy(&partner_id, m.body() + 1, 1);
-		vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device, network_format, network_channels)));
+		vc_streams.insert(std::make_pair(partner_id, rbs(capture_device, playback_device)));
 	}
 	void refresh_devices() {
 		refresh_playback_device_list();
@@ -691,8 +654,6 @@ public:
 	ma_context playback_context;
 	ma_device capture_device;
 	ma_context capture_context;
-	ma_format network_format;
-	ma_uint32 network_channels;
 	std::array<uint8_t, 32> session_key;
 	std::array<uint8_t, 12> iv_base;
 	uint32_t send_counter = 0;
@@ -1885,7 +1846,7 @@ private:
 		udp_socket(std::make_shared<udp::socket>(io_context, udp::endpoint(udp::v4(), udp_port_number))), window(window), endpoints(endpoints),
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() },
-		audio_ctx{FRAME_SIZE, SAMPLE_RATE, this},
+		audio_ctx{FRAME_SIZE, this},
 		me(), steady_timer_{io_context}, send_timer_{std::make_shared<boost::asio::steady_timer>(io_context)}
 	{	
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
@@ -1933,7 +1894,7 @@ void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFrames
 		}
 		float* temp = ctx->playback_temp_buffer.data();
 		ctx->sound_controls.apply_gain_and_upmix(temp, in, frames_to_read, vol,
-			ctx->network_channels, out_ch);
+			NETWORK_CHANNELS, out_ch);
 		ma_uint32 samples_read = frames_to_read * out_ch;
 		ma_uint32 samples_needed = frameCount * out_ch;
 		if (samples_read > total_samples) {
@@ -1956,7 +1917,7 @@ void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesI
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
 
 	const uint32_t in_ch = pDevice->capture.channels;
-	const uint32_t out_ch = ctx->network_channels;
+	const uint32_t out_ch = NETWORK_CHANNELS;
 
 	const float gain_db = std::pow(10.0f, gain * 0.45f);
 	const float* src = ((const float*)pFramesIn);
@@ -1980,7 +1941,7 @@ void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesI
 			in_ch,
 			out_ch
 		);
-		ma_uint32 playback_bpf = ma_get_bytes_per_frame(ctx->network_format, out_ch);
+		ma_uint32 playback_bpf = ma_get_bytes_per_frame(NETWORK_FORMAT, out_ch);
 		std::memcpy(pMappedBuffer, out, framesToWrite * playback_bpf);
 		result = ma_pcm_rb_commit_write(&ctx->capture_ring_buffer, framesToWrite);
 
