@@ -111,114 +111,6 @@ void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_clien
 void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount);
 void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount);
 
-class HighPassFilter {
-public:
-	void set(float sample_rate, float cutoffHz) {
-		float RC = 1.0f / (2.0f * 3.14159265f * cutoffHz);
-		alpha = RC / (RC + 1.0f / sample_rate);
-		prevInput = 0.0f;
-		prevOutput = 0.0f;
-	}
-	float process(float input)
-	{
-		float output = alpha * (prevOutput + input - prevInput);
-		prevInput = input;
-		prevOutput = output;
-		return output;
-	}
-
-private:
-	float alpha;
-	float prevInput;
-	float prevOutput;
-};
-class BiquadFilter {
-public:
-	void setLowPass(float sampleRate, float cutoffFreq, float Q = 0.707f) {
-		float omega = 2.0f * 3.14f * cutoffFreq / sampleRate;
-		float sin_omega = std::sin(omega);
-		float cos_omega = std::cos(omega);
-		float alpha = sin_omega / (2.0f * Q);
-
-		float b0 = (1.0f - cos_omega) / 2.0f;
-		float b1 = 1.0f - cos_omega;
-		float b2 = (1.0f - cos_omega) / 2.0f;
-		float a0 = 1.0f + alpha;
-		float a1 = -2.0f * cos_omega;
-		float a2 = 1.0f - alpha;
-
-		// Normalize coefficients
-		this->b0 = b0 / a0;
-		this->b1 = b1 / a0;
-		this->b2 = b2 / a0;
-		this->a1 = a1 / a0;
-		this->a2 = a2 / a0;
-
-		x1 = x2 = y1 = y2 = 0.0f;
-	}
-
-	float process(float x) {
-		float y = b0 * x + b1 * x1 + b2 * x2
-			- a1 * y1 - a2 * y2;
-
-		x2 = x1;
-		x1 = x;
-		y2 = y1;
-		y1 = y;
-
-		return y;
-	}
-
-private:
-	float b0, b1, b2;
-	float a1, a2;
-	float x1, x2;
-	float y1, y2;
-};
-class NoiseProfile {
-public:
-	NoiseProfile(size_t frame_size) :
-		buffer(frame_size, 0.0f), alpha(0.99f), noise_floor(100.0f) {
-	}
-	void smooth(size_t count) {
-		/*std::vector<float> smoothed(buffer); // Copy current buffer
-		for (size_t i = 1; i < count - 1; ++i) {
-			buffer[i] = (smoothed[i - 1] + smoothed[i] + smoothed[i + 1]) / 3.0f;
-		}
-		buffer[0] = (smoothed[0] + smoothed[1]) / 2.0f;
-		buffer[count - 1] = (smoothed[count - 2] + smoothed[count - 1]) / 2.0f;*/
-		float avg = std::accumulate(buffer.begin(), buffer.end(), 0.0f) / buffer.size();
-		noise_floor = 0.05f * avg;
-		float prev = buffer[0];
-
-		for (size_t i = 1; i < count - 1; ++i) {
-			buffer[i] = (prev + buffer[i]) * 0.5f; prev = buffer[i];
-		}
-		for (size_t i = 1; i < count - 1; ++i) {
-			buffer[i] = std::max(buffer[i], noise_floor);
-		}
-	}
-	void update(const int16_t* samples, size_t count) {
-		for (size_t i = 0; i < count; ++i) {
-			float sample = static_cast<float>(samples[i]);
-			float energy = sample * sample;
-			buffer[i] = alpha * buffer[i] + (1.0f - alpha) * energy;
-		}
-		if (last_update - current_time > delta_time * 5.0f) {
-			last_update = current_time;
-			smooth(count);
-		}
-	}
-	float get(size_t i) const {
-		if (i >= buffer.size()) return std::sqrt(noise_floor);
-		return std::sqrt(buffer[i]);
-	}
-private:
-	std::vector<float>buffer;
-	float alpha;
-	float noise_floor;
-	std::chrono::steady_clock::time_point last_update;
-};
 class sound_control {
 public:
 	void apply_gain(float* dst, const float* src, size_t count, float gain) {
@@ -233,7 +125,7 @@ public:
 			dst[i] = sample;
 		}
 	}
-	void apply_gain_and_upmix(float* dst, const float* src, size_t frame_count, float gain,
+	/*void apply_gain_and_upmix(float* dst, const float* src, size_t frame_count, float gain,
 		uint32_t in_channels, uint32_t out_channels) {
 		for (size_t f = 0; f < frame_count; ++f) {
 			const float* in_frame = src + f * in_channels;
@@ -265,7 +157,48 @@ public:
 				}
 			}
 		}
+	}*/
+	void apply_gain_and_upmix(float* dst, const float* src, size_t frame_count,
+		float gain, uint32_t in_channels, uint32_t out_channels)
+	{
+		// Prevent division-by-zero or crash bugs
+		if (in_channels == 0 || out_channels == 0) return;
+
+		// Linear limit for clipping (1.0f is digital maximum / 0 dBFS)
+		const float limit = 1.0f;
+
+		for (size_t f = 0; f < frame_count; ++f) {
+			const float* in_frame = src + (f * in_channels);
+			float* out_frame = dst + (f * out_channels);
+
+			if (in_channels == 1) {
+				// Standard Opus path: Input is Mono, upmix to output channels
+				float mono_value = in_frame[0] * gain;
+
+				// Only pay the heavy CPU cost of tanh if the signal actually clips
+				if (mono_value > limit)       mono_value = limit * tanhf(mono_value / limit);
+				else if (mono_value < -limit) mono_value = -limit * tanhf(-mono_value / limit);
+
+				// Copy the processed mono sample to all output channels
+				for (uint32_t c = 0; c < out_channels; ++c) {
+					out_frame[c] = mono_value;
+				}
+			}
+			else {
+				// Fallback path: Input is Multi-channel (Stereo)
+				for (uint32_t c = 0; c < out_channels; ++c) {
+					// Map out_channels back to available in_channels gracefully
+					float s = in_frame[c % in_channels] * gain;
+
+					if (s > limit)       s = limit * tanhf(s / limit);
+					else if (s < -limit) s = -limit * tanhf(-s / limit);
+
+					out_frame[c] = s;
+				}
+			}
+		}
 	}
+
 };
 inline float hermite(float y0, float y1, float y2, float y3, float t)
 {
@@ -371,12 +304,10 @@ public:
 class Audio_Context {
 public:
 	Audio_Context(size_t frame_size, chat_client* c_) : speaking{ false },
-		current_gain{ 1.0f }, gain{ 20.0f }, noise_profile{ frame_size },
+		current_gain{ 1.0f }, gain{ 20.0f },
 		silence_frames{ 0 }, hangover_duration{ 10 }, fading_out{ false },
 		fade_index{ 0 }, fade_duration{ 30 }, rms_smoothed{ 0.0f },
-		encoder{ nullptr }, decoder{ nullptr },
-		hp_filter{},
-		lp_filter{},
+		encoder{ nullptr }, decoder{ nullptr },		
 		sound_controls{},
 		c{c_},
 		capture_temp_buffer{},
@@ -457,6 +388,8 @@ public:
 		}
 		deviceConfigPlayback = ma_device_config_init(ma_device_type_playback);
 		deviceConfigPlayback.playback.format = NETWORK_FORMAT;
+		deviceConfigPlayback.sampleRate = SAMPLE_RATE;
+		deviceConfigPlayback.playback.channels = 0;
 		deviceConfigPlayback.playback.pDeviceID = &playback_devices[selected_playback].id;
 		deviceConfigPlayback.dataCallback = playback_callback;
 		deviceConfigPlayback.pUserData = this;
@@ -516,6 +449,8 @@ public:
 		}
 		deviceConfigCapture = ma_device_config_init(ma_device_type_capture);
 		deviceConfigCapture.capture.format = NETWORK_FORMAT;
+		deviceConfigCapture.sampleRate = SAMPLE_RATE;
+		deviceConfigCapture.capture.channels = 0;
 		deviceConfigCapture.capture.pDeviceID = &capture_devices[selected_capture].id;
 		deviceConfigCapture.dataCallback = capture_callback;
 		deviceConfigCapture.pUserData = this;
@@ -623,10 +558,7 @@ public:
 	bool fading_out;
 	float current_gain;
 	float gain;
-	NoiseProfile noise_profile;
 	//SpectralSuppressor spectral_suppressor;
-	HighPassFilter hp_filter;
-	BiquadFilter lp_filter;
 	sound_control sound_controls;
 	ma_uint32 silence_frames;
 	ma_uint32 fade_index;
@@ -2024,7 +1956,7 @@ void draw_menu_bar(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 				}
 				if (ImGui::BeginMenu("Controls")) {
 					ImGui::SliderFloat("Gain", & gain, 0.0f, 1.0f, "##%.004f");
-					ImGui::SliderFloat("Threshold", &db_threshold, 0.0f, 1.0f, "##%.004f");
+					//ImGui::SliderFloat("Threshold", &db_threshold, 0.0f, 1.0f, "##%.004f");
 					ImGui::EndMenu();
 				}
 				ImGui::EndMenu();
@@ -2328,112 +2260,9 @@ void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_clien
 
 	glfwSwapBuffers(window);
 }
-
-
-/*class SpectralSuppressor {
-public:
-	SpectralSuppressor(size_t frame_size):
-		nfft(frame_size),
-		cfg(kiss_fft_alloc(nfft, 0, nullptr, nullptr)),
-		icfg(kiss_fft_alloc(nfft, 1, nullptr, nullptr)),
-		noise_profile(nfft, 0.0f),
-		alpha(0.95f),
-		frame_buffer(frame_size)
-	{
-		if (!cfg || !icfg) {
-			throw std::runtime_error("Failed to allocate KissFFT config");
-		}
-	}
-	SpectralSuppressor(const SpectralSuppressor&) = delete;
-	SpectralSuppressor& operator=(const SpectralSuppressor&) = delete;
-	SpectralSuppressor(SpectralSuppressor&&) = delete;
-	SpectralSuppressor& operator=(SpectralSuppressor&&) = delete;
-	~SpectralSuppressor(){
-		std::cout << "destructor\n";
-		if(cfg) free(cfg);
-		if(icfg) free(icfg);
-	}
-	void update_noise_profile(const int16_t* samples, float frame_count) {
-		std::vector<kiss_fft_cpx> in(nfft), out(nfft);
-		for (size_t i = 0; i < nfft; ++i) {
-			float window = 0.5f * (1.0f - std::cos(2.0f * 3.14f * i / (nfft - 1)));
-			in[i].r = samples[i] * window;
-			in[i].i = 0;
-		}
-		for (size_t i = frame_count; i < nfft; ++i)
-			in[i].r = 0.0f;
-
-		kiss_fft(cfg, in.data(), out.data());
-		for (size_t i = 0; i < nfft; ++i) {
-			float mag = std::sqrt(out[i].r * out[i].r + out[i].i * out[i].i);
-			mag = std::max(mag, 1.0f);
-			noise_profile[i] = alpha * noise_profile[i] + (1.0f - alpha) * mag;
-		}
-	}*/
-	/*void suppress(const int16_t* input, int16_t* output, ma_uint32 frame_count, float gain = 1.0f) {
-		std::memcpy(frame_buffer.data(), input, frame_count * sizeof(int16_t));
-		std::memset(frame_buffer.data() + frame_count, 0, (nfft - frame_count) * sizeof(int16_t));
-		std::vector<kiss_fft_cpx> in(nfft), out(nfft);
-		for (size_t i = 0; i < nfft; ++i) {
-			in[i].r = input[i];
-			in[i].i = 0;
-		}
-		kiss_fft(cfg, in.data(), out.data());
-
-		for (size_t i = 0; i < nfft; ++i) {
-			float mag = std::sqrt(out[i].r * out[i].r + out[i].i * out[i].i);
-			float suppression = std::max(0.0f, mag - noise_profile[i]);
-			float scale = suppression / (mag + 1e-6f);
-			out[i].r *= scale;
-			out[i].i *= scale;
-		}
-
-		kiss_fft(icfg, out.data(), in.data());
-		
-		for (size_t i = 0; i < nfft; ++i) {
-			float sample = in[i].r / nfft * gain;
-			//std::cout << "frame_buffer[" << i << "] " << frame_buffer[i] << "\n";
-			frame_buffer[i] = static_cast<int16_t>(std::clamp(sample, -32768.0f, 32767.0f));
-		}
-		std::memcpy(output, frame_buffer.data(), frame_count * sizeof(int16_t));
-	}
-private:
-	size_t nfft;
-	//kiss_fft_cfg cfg;
-	//kiss_fft_cfg icfg;
-	std::vector<float> noise_profile;
-	std::array<int16_t, 960> frame_buffer{};
-	float alpha;
-};*/
-
-
-float compute_rms(const int16_t* samples, size_t count) {
-	float sum = 0.0f;
-	for (size_t i = 0; i < count; ++i)
-		sum += samples[i] * samples[i];
-	return std::sqrt(sum / count);
-}
-
-//HighPassFilter hp_filter(48000.0f, 100.0f);
-//SpectralSuppressor suppressor(960);
 constexpr float threshold = 100.0f;
 constexpr float upper_threshold = 250.0f;
 constexpr float lower_threshold = 100.0f;
-void fade_out(ma_uint32 frame_count, Audio_Context* ctx, int16_t* out) {
-	for (ma_uint32 i = 0; i < frame_count; ++i) {
-		float fade_factor = 1.0f - static_cast<float>(ctx->fade_index) / ctx->fade_duration;
-		fade_factor = std::clamp(fade_factor, 0.0f, 1.0f);
-
-		float sample = static_cast<float>(out[i]) * fade_factor;
-		out[i] = static_cast<int16_t>(std::clamp(sample, -32768.0f, 32767.0f));
-
-		ctx->fade_index++;
-		if (ctx->fade_index >= ctx->fade_duration) {
-			ctx->fading_out = false;
-			break;
-		}
-	}
-}
 std::mutex mtx;
 std::condition_variable cv;
 bool shutdown_requested = false;
