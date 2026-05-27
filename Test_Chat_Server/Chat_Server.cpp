@@ -353,9 +353,9 @@ public:
 		id_msg.encode_header();
 		participant->deliver(id_msg);
 
-		for (auto msg : recent_msgs_) {
+		/*for (auto msg : recent_msgs_) {
 			participant->deliver(msg);
-		}
+		}*/
 		return true;
 	}
 	void send_vc_leave_notification(chat_participant_ptr participant) {

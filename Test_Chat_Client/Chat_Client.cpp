@@ -211,10 +211,10 @@ inline float hermite(float y0, float y1, float y2, float y3, float t)
 struct SimpleResampler {
 	float prev2 = 0.0f;
 	float prev1 = 0.0f;
-	float  lastSample = 0.0f;  // previous input sample
-	double phase = 0.0;   // fractional position between lastSample and current
-	double ratio = 1.0;   // output_rate / input_rate (or your drift ratio)
-	bool   primed = false; // have we seen at least one sample yet?
+	float  lastSample = 0.0f; 
+	double phase = 0.0;  
+	double ratio = 1.0;
+	bool   primed = false;
 };
 size_t simple_resample(
 	SimpleResampler& r,
@@ -230,7 +230,6 @@ size_t simple_resample(
 	if (inFrames == 0 || outCap == 0)
 		return 0;
 
-	// Prime with the first sample on first call.
 	if (!r.primed) {
 		r.prev2 = in[0];
 		r.prev1 = in[0];
@@ -716,14 +715,14 @@ public:
 	void schedule_check_and_send_test() {
 		auto self = shared_from_this();
 		boost::asio::post(io_context_, [self] {
-			self->send_timer_->expires_after(boost::asio::chrono::milliseconds(10));
+			self->send_timer_->expires_after(boost::asio::chrono::milliseconds(0));
 			auto timer_cpy = self->send_timer_;
 			self->send_timer_->async_wait([self, timer_cpy](const boost::system::error_code& ec) {
 				self->check_and_send_test();
+				self->schedule_check_and_send_test();
 				});
 			}
 		);
-
 	}
 	void check_and_send_test() {
 		if (!audio_ctx.running_capture) { return; }
@@ -741,7 +740,6 @@ public:
 				(size_t)(frames_to_read - consumed),
 				FRAME_SIZE - audio_ctx.encode_filled
 			);
-
 			std::memcpy(audio_ctx.encode_buffer + audio_ctx.encode_filled,
 				pcm + consumed, can_copy * sizeof(float));
 
@@ -760,8 +758,7 @@ public:
 					sizeof(opus_packet)
 				);
 				if (encoded_bytes <= 0) {
-					ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, consumed);
-					return;
+					std::cout << "NETWORK SEND: encoded_bytes <= 0\n";
 				}
 
 				uint8_t nonce[12];
@@ -771,7 +768,7 @@ public:
 				uint8_t tag[16];
 
 				std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
-				uint16_t body_len = (uint16_t)(4 + encoded_bytes + 16);
+				uint16_t body_len = (uint16_t)(4 + encoded_bytes + 16); //4 = send_counter, 16 = tag
 				m->encode_header(session_token, body_len, vc_room_id, me.id);
 				const uint8_t* aad = (const uint8_t*)m->data();
 				int aad_len = m->header_length;
@@ -786,8 +783,7 @@ public:
 					ciphertext,
 					tag
 				)) {
-					ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, consumed);
-					return;
+					std::cout << "NETWORK SEND: encrypt fail\n";
 				}
 				uint8_t* body = (uint8_t*)m->body();
 				std::memcpy(body, &audio_ctx.send_counter, 4);
@@ -798,7 +794,7 @@ public:
 				auto buffer = boost::asio::buffer(m->data(), m->length());
 				auto self = shared_from_this();
 				audio_ctx.encode_filled = 0;
-				ma_pcm_rb_commit_read(&self->audio_ctx.capture_ring_buffer, consumed);
+				std::cout << "NETWORK SEND: " << encoded_bytes << "\n";
 				udp_socket->async_send_to(buffer, server_endpoint,
 					[this, self, /*size*/consumed](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
 						if (!ec) {
@@ -808,11 +804,10 @@ public:
 						}
 					}
 				);
-				return;
 			}
-
 		}
 		ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, frames_to_read);
+		std::cout << "NETWORK SEND: commit_read = " << frames_to_read << "\n";
 		return;	
 	}
 	
@@ -903,13 +898,16 @@ public:
 				if (!self->audio_ctx.running_playback) {
 					boost::asio::post(io_context_, [self] {
 						self->check_and_read_header_test();
-						});								return;
+						});	
+					std::cout << "NETWORK READ: fail !running_playback\n";
+					return;
 				}
 				if (!ec) {
 					if (!read_vc_msg_->decode_header()) {
 						boost::asio::post(io_context_, [self] {
 							self->check_and_read_header_test();
-							});						
+							});		
+						std::cout << "NETWORK READ: fail decode header\n";
 						return;
 					}
 					check_and_read_body_test(read_vc_msg_);
@@ -931,6 +929,7 @@ private:
 		uint8_t* body = (uint8_t*)read_vc_msg_->body();
 		uint8_t sender_id = read_vc_msg_->sender_id;
 		if (body_len < 4 + 16) {
+			std::cout << "NETWORK READ: fail body_len < 20\n";
 			return;
 		}		
 		uint32_t counter;
@@ -943,11 +942,12 @@ private:
 		uint8_t nonce[12];
 		build_nonce(audio_ctx.iv_base, counter, nonce);
 
-		const uint8_t* aad = (const uint8_t*)read_vc_msg_->data();
+		const uint8_t* aad = (const uint8_t*)read_vc_msg_->data(); //additional authenticated data 
 		int aad_len = read_vc_msg_->header_length;
 		std::string header = std::string((char*)aad, aad_len);
-		uint8_t opus_packet[4000];
+		uint8_t opus_packet[1500];
 		if (ct_len > sizeof(opus_packet)) {
+			std::cout << "NETWORK READ fail: cipher_text length > max opus_packet size\n";
 			return;
 		}
 		if (!aes_gcm_decrypt(
@@ -961,6 +961,7 @@ private:
 			opus_packet
 			))
 		{
+			std::cout << "NETWORK READ: fail decrypt\n";
 			return;
 		}
 		rbs& stream = audio_ctx.vc_streams.at(sender_id);
@@ -974,6 +975,7 @@ private:
 			0
 		);
 		if (decoded_frames <= 0) {
+			std::cout << "NETWORK READ fail: decoded_frames <= 0\n";
 			return;
 		}
 		if (decoded_frames < FRAME_SIZE) {
@@ -985,8 +987,10 @@ private:
 		if (readable > max_frames) {
 			ma_pcm_rb_seek_read(&stream.playback_rb, readable - max_frames);
 		}
-
-		SimpleResampler& rs = stream.resampler; 
+		//TODO get rid of this. there's some other timing 
+		//error causing audio drift to occur and this is just
+		//complicating stuff even though it fixes the drift.
+		/*SimpleResampler& rs = stream.resampler; 
 		const ma_uint32 target = FRAME_SIZE * 3;
 		ma_uint32 rb = ma_pcm_rb_available_read(&stream.playback_rb);
 
@@ -1005,8 +1009,8 @@ private:
 			pcm_out.data(), static_cast<size_t>(in_frames),
 			in_consumed,
 			converted, FRAME_SIZE * 4
-		);
-
+		);*/
+		ma_uint64 out_frames = decoded_frames;
 		size_t avail = ma_pcm_rb_available_write(&stream.playback_rb);
 		size_t needed = out_frames;
 		if (avail < needed) {
@@ -1023,14 +1027,16 @@ private:
 			&pOut
 		);
 		if (result != MA_SUCCESS || frames_written == 0) {
-			//std::cout << "frames_written == " << frames_written << "\n";
+			std::cout << "NETWORK READ fail: frames_written == " << frames_written << 
+				" result = " << result << "\n";
 			return;
 		}
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
-		std::memcpy(pOut, converted, bytes_to_write);
+		//std::memcpy(pOut, converted, bytes_to_write);
+		std::memcpy(pOut, pcm_out.data(), bytes_to_write);
 		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
-
+		std::cout << "NETWORK READ: commit frames_written = " << frames_written << "\n";
 		/*ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
 		ma_uint32 frames_written = frames_to_write;
 		void* pOut = nullptr;
@@ -1361,6 +1367,7 @@ bool aes_gcm_encrypt(
 					vc_room_id = 0;
 					audio_ctx.start_capture();
 					audio_ctx.start_playback();
+					schedule_check_and_send_test();
 					check_and_read_header_test();
 				}
 				break;
@@ -1840,6 +1847,7 @@ void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFrames
 			ctx->mix_buffer[i] += temp[i];
 		}
 		ma_pcm_rb_commit_read(&stream.playback_rb, frames_to_read);
+		std::cout << "PLAYBACK_CALLBACK: frames_to_read = " << frames_to_read << "\n";
 	}
 	std::memcpy(out, ctx->mix_buffer.data(), total_samples * sizeof(float));
 }
@@ -1881,7 +1889,8 @@ void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesI
 			break;
 		}
 		framesWritten += framesToWrite;
-		ctx->c->schedule_check_and_send_test();
+		std::cout << "CAPTURE_CALLBACK: framesWritten = " << framesWritten << "\n";
+		//ctx->c->schedule_check_and_send_test();
 	}
 }
 
@@ -2291,6 +2300,7 @@ int main(int argc, char* argv[])
 {	 
 	const std::string cert_leaf = "isrg_cert.pem";
 	std::filesystem::path cert_path = std::filesystem::current_path();
+	std::cout << "cert_path = " << cert_path << "\n";
 	cert_path.append(cert_leaf);
 	std::string pem = cert_path.string();
 	msg_history.reserve(100);
