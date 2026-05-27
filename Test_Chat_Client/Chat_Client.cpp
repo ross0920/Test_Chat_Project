@@ -893,8 +893,10 @@ public:
 	void check_and_read_header_test() {
 		auto self = shared_from_this();
 		auto read_vc_msg_ = std::make_shared<voice_chat_message>();
+		std::cout << "NETWORK READ: heartbeat\n";
 		udp_socket->async_receive_from(boost::asio::buffer(read_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), server_endpoint,
 			[this, self, read_vc_msg_](boost::system::error_code ec, std::size_t bytes) {
+				std::cout << "NETWORK READ: async_receive_from\n";
 				if (!self->audio_ctx.running_playback) {
 					boost::asio::post(io_context_, [self] {
 						self->check_and_read_header_test();
