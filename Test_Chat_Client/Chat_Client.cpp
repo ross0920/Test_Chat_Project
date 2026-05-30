@@ -712,6 +712,34 @@ public:
 	void close() {
 		boost::asio::post(io_context_, [this]() {socket_->close(); });
 	}
+	void mix_and_write_to_playback_rb() {
+		auto iter = audio_ctx.vc_streams.begin();
+		for (; iter != audio_ctx.vc_streams.end(); ++iter) {
+			ma_uint32 frames_available = 0;
+			void* p_out = nullptr;
+			while(frames_available < FRAME_SIZE) {
+				ma_uint32 frames_written = frames_available;
+				ma_result result = ma_pcm_rb_acquire_write(&iter->second.playback_rb, &frames_written, &p_out);
+				if (result != MA_SUCCESS) {
+					break;
+				}
+				result = ma_pcm_rb_commit_write(&iter->second.playback_rb, frames_written);
+				if (result != MA_SUCCESS) {
+					break;
+				}
+				frames_available += frames_written;
+					//iter->second.playback_rb)
+			}
+		}
+	}
+	void schedule_playback_mixer() {
+		mix_timer_.expires_after(boost::asio::chrono::milliseconds(20));
+		mix_timer_.async_wait([this](const boost::system::error_code& ec) {
+			mix_and_write_to_playback_rb();
+			schedule_playback_mixer();
+		});
+	}
+
 	void schedule_check_and_send_test() {
 		auto self = shared_from_this();
 		boost::asio::post(io_context_, [self] {
@@ -769,7 +797,7 @@ public:
 
 				std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 				uint16_t body_len = (uint16_t)(4 + encoded_bytes + 16); //4 = send_counter, 16 = tag
-				m->encode_header(session_token, body_len, vc_room_id, me.id);
+				m->encode_header(session_token, body_len, vc_room_id, me.id, 0);
 				const uint8_t* aad = (const uint8_t*)m->data();
 				int aad_len = m->header_length;
 				std::string header = std::string((char*)aad, aad_len);
@@ -794,7 +822,7 @@ public:
 				auto buffer = boost::asio::buffer(m->data(), m->length());
 				auto self = shared_from_this();
 				audio_ctx.encode_filled = 0;
-				std::cout << "NETWORK SEND: " << encoded_bytes << "\n";
+				std::cout << "NETWORK SEND: " << encoded_bytes << " client port is " << udp_socket->local_endpoint() << "\n";
 				udp_socket->async_send_to(buffer, server_endpoint,
 					[this, self, /*size*/consumed](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
 						if (!ec) {
@@ -809,86 +837,6 @@ public:
 		ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, frames_to_read);
 		std::cout << "NETWORK SEND: commit_read = " << frames_to_read << "\n";
 		return;	
-	}
-	
-
-	void check_and_send_test_old() {
-		if (!audio_ctx.running_capture) { return; }
-
-		ma_result result;
-		ma_uint32 frames_to_read = FRAME_SIZE;
-		void* pOut = nullptr;
-		result = ma_pcm_rb_acquire_read(&audio_ctx.capture_ring_buffer, &frames_to_read, &pOut);
-		if (result == MA_SUCCESS && /*size*/ frames_to_read > 0) {
-			/*ma_uint32 bytes_per_frame = ma_get_bytes_per_frame(
-				audio_ctx.network_format,
-				audio_ctx.network_channels);
-			size_t pcm_bytes = frames_to_read * bytes_per_frame;
-			if (pcm_bytes > max_playback_size) {
-				pcm_bytes = max_playback_size;
-				frames_to_read = (ma_uint32)(pcm_bytes / bytes_per_frame);
-				pcm_bytes = frames_to_read * bytes_per_frame;
-			}*/
-			const float* pcm = (const float*)pOut;
-			unsigned char opus_packet[4000];
-			int encoded_bytes = opus_encode_float(
-				audio_ctx.encoder,
-				pcm,
-				//frames_to_read,
-				FRAME_SIZE,
-				opus_packet,
-				sizeof(opus_packet)
-			);
-			if (encoded_bytes <= 0) {
-				ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, 0);
-				return;
-			}
-			
-			uint8_t nonce[12];
-			build_nonce(audio_ctx.iv_base, audio_ctx.send_counter, nonce);
-
-			uint8_t ciphertext[4000];
-			uint8_t tag[16];
-
-			std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
-			uint16_t body_len = (uint16_t)(4 + encoded_bytes + 16);
-			m->encode_header(session_token, body_len, vc_room_id, me.id);
-			const uint8_t* aad = (const uint8_t*)m->data();
-			int aad_len = m->header_length;
-			std::string header = std::string((char*)aad, aad_len);
-			if (!aes_gcm_encrypt(
-				audio_ctx.session_key.data(),
-				nonce,
-				opus_packet,
-				encoded_bytes,
-				aad,
-				aad_len,
-				ciphertext,
-				tag
-			)) {
-				ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, 0);
-				return;
-			}
-			uint8_t* body = (uint8_t*)m->body();
-			std::memcpy(body, &audio_ctx.send_counter, 4);
-			std::memcpy(body + 4, ciphertext, encoded_bytes);
-			std::memcpy(body + 4 + encoded_bytes, tag, 16);
-
-			audio_ctx.send_counter++;
-			auto buffer = boost::asio::buffer(m->data(), m->length());
-			auto self = shared_from_this();
-			udp_socket->async_send_to(buffer, server_endpoint,
-				[this, self, /*size*/frames_to_read](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
-					if (!ec) {
-						ma_pcm_rb_commit_read(&self->audio_ctx.capture_ring_buffer, frames_to_read);
-					}
-					else {
-						udp_socket->close();
-					}
-				}
-			);
-			return;
-		}
 	}
 	void check_and_read_header_test() {
 		auto self = shared_from_this();
@@ -989,29 +937,6 @@ private:
 		if (readable > max_frames) {
 			ma_pcm_rb_seek_read(&stream.playback_rb, readable - max_frames);
 		}
-		//TODO get rid of this. there's some other timing 
-		//error causing audio drift to occur and this is just
-		//complicating stuff even though it fixes the drift.
-		/*SimpleResampler& rs = stream.resampler; 
-		const ma_uint32 target = FRAME_SIZE * 3;
-		ma_uint32 rb = ma_pcm_rb_available_read(&stream.playback_rb);
-
-		double error = (double)rb - (double)target;
-
-		double target_ratio = 1.0 + error * 0.0000005;
-		target_ratio = std::clamp(target_ratio, 0.98, 1.02);
-		rs.ratio += (target_ratio - rs.ratio) * 0.001;
-
-		float converted[FRAME_SIZE * 4];
-		size_t in_consumed = 0;
-		ma_uint64 in_frames = decoded_frames;
-		rs.phase = 0.0;
-		ma_uint64 out_frames = simple_resample(
-			rs,
-			pcm_out.data(), static_cast<size_t>(in_frames),
-			in_consumed,
-			converted, FRAME_SIZE * 4
-		);*/
 		ma_uint64 out_frames = decoded_frames;
 		size_t avail = ma_pcm_rb_available_write(&stream.playback_rb);
 		size_t needed = out_frames;
@@ -1035,29 +960,12 @@ private:
 		}
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
-		//std::memcpy(pOut, converted, bytes_to_write);
 		std::memcpy(pOut, pcm_out.data(), bytes_to_write);
 		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
 		std::cout << "NETWORK READ: commit frames_written = " << frames_written << "\n";
-		/*ma_uint32 frames_to_write = (ma_uint32)decoded_frames;
-		ma_uint32 frames_written = frames_to_write;
-		void* pOut = nullptr;
-		ma_result result = ma_pcm_rb_acquire_write(
-			&stream.playback_rb,
-			&frames_written,
-			&pOut
-		);
-		if (result != MA_SUCCESS || frames_written == 0) {
-			return;
-		}
-		if (frames_written < frames_to_write) {
-			return;
-		}
-		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
-		size_t bytes_to_write = frames_written * bpf;
-		std::memcpy(pOut, pcm_out.data(), bytes_to_write); 
-		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);*/
 	}
+
+
 	std::shared_ptr<boost::asio::steady_timer> retry_read_capture_timer;
 	void add_participants(chat_message& m) {
 		auto iter = participant_client_map.find(me.id);
@@ -1182,6 +1090,25 @@ void heartbeat_ping(chat_message& m) {
 	msg.body_length(sizeof(me.id));
 	msg.encode_header();
 	write_ssl(msg);
+}
+void udp_heartbeat_ping() {
+	std::cout << "udp_heartbeat_ping\n";
+	std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
+	uint16_t body_len = (uint16_t)(0); 
+	m->encode_header(session_token, body_len, vc_room_id, me.id, 1);
+	auto buffer = boost::asio::buffer(m->data(), m->length());
+	udp_socket->async_send_to(buffer, server_endpoint,
+		[this](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
+		}
+	);
+	udp_heartbeat_timer_.expires_after(std::chrono::seconds(5));
+	udp_heartbeat_timer_.async_wait([this](const boost::system::error_code& ec) {
+		udp_heartbeat_ping();
+		});
+
+}
+void start_udp_heartbeat_ping() {
+	udp_heartbeat_ping();
 }
 void build_nonce(
 	const std::array<uint8_t, 12>& iv_base,
@@ -1369,6 +1296,7 @@ bool aes_gcm_encrypt(
 					vc_room_id = 0;
 					audio_ctx.start_capture();
 					audio_ctx.start_playback();
+					start_udp_heartbeat_ping();
 					schedule_check_and_send_test();
 					check_and_read_header_test();
 				}
@@ -1779,6 +1707,8 @@ private:
 	ma_context ma_playback_context;
 	std::array<uint8_t, 1500>recv_buffer_;
 	boost::asio::steady_timer steady_timer_;
+	boost::asio::steady_timer mix_timer_;
+	boost::asio::steady_timer udp_heartbeat_timer_;
 
 	chat_client(boost::asio::io_context& io_context,
 		boost::asio::ssl::context& ssl_context,
@@ -1788,7 +1718,9 @@ private:
 		timer_(std::make_unique<boost::asio::steady_timer>(io_context)),
 		udp_timer_{ udp_socket->get_executor() },
 		audio_ctx{FRAME_SIZE, this},
-		me(), steady_timer_{io_context}, send_timer_{std::make_shared<boost::asio::steady_timer>(io_context)}
+		me(), steady_timer_{io_context}, send_timer_{std::make_shared<boost::asio::steady_timer>(io_context)}, 
+		mix_timer_{ boost::asio::steady_timer(io_context) },
+		udp_heartbeat_timer_{io_context}
 	{	
 		ssl_socket_ = std::make_unique<boost::asio::ssl::stream<tcp::socket>>(io_context_, ssl_context_);
 		ssl_socket_->set_verify_mode(boost::asio::ssl::verify_peer);
@@ -1801,6 +1733,8 @@ private:
 		session_token = "";
 		auto client_ep = udp_socket->local_endpoint();
 		udp_port_client = client_ep.port();
+		std::cout << "UDP open: " << udp_socket->is_open() << "\n";
+		std::cout << "UDP bound to: " << udp_socket->local_endpoint() << "\n";
 	}
 };
 void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {

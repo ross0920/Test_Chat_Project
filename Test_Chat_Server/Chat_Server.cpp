@@ -297,7 +297,9 @@ public:
 		random_bytes(rc.session_key.data(), rc.session_key.size());
 		random_bytes(rc.iv_base.data(), rc.iv_base.size());
 	}
-
+	std::chrono::steady_clock::time_point get_client_last_time(uint8_t id) {
+		return participant_map.at(id)->get_current_timepoint();
+	}
 	void clean_vc_hash(uint8_t id) {
 		auto iter = vc_hashmap.begin();
 		for (; iter != vc_hashmap.end();) {
@@ -318,12 +320,14 @@ public:
 		}
 	}
 
-	bool route_udp(uint8_t vc_room_id_, std::shared_ptr<voice_chat_message> recv_vc_msg_) {
-		if (participant_map.find(recv_vc_msg_->sender_id) == participant_map.end()) { 
-			std::cout << "sender id not found\n";
-			return false; }
-		//std::cout << "route_udp to sender_id[" << static_cast<int>(recv_vc_msg_->sender_id) << "]\n";
+	bool route_udp(uint8_t vc_room_id_, std::shared_ptr<voice_chat_message> recv_vc_msg_, boost::asio::ip::udp::endpoint ep_) {
+		if (recv_vc_msg_->keep_alive == 1) {
+			std::cout << "KEEP ALIVE UDP PACKET from " << static_cast<int>(recv_vc_msg_->sender_id) << "\n";
+			participant_map.at(recv_vc_msg_->sender_id)->update_client_endpoint(ep_);
+			return false;
+		}
 		participant_map.at(recv_vc_msg_->sender_id)->write_vc_msg_to_rb(recv_vc_msg_);
+	
 		return true;
 	}
 	bool validate_token(uint8_t sender_id_, std::string token_) {
@@ -595,8 +599,16 @@ public:
 	std::shared_ptr<boost::asio::ip::udp::endpoint> get_client_udp_endpoint(const uint8_t& client_id) {
 		auto iter = participant_map.find(client_id);
 		if (iter == participant_map.end()) { return nullptr; }
+		
 		return iter->second->get_client_udp_endpoint();
 	}
+	boost::asio::ip::udp::endpoint get_last_client_udp_endpoint(const uint8_t& client_id) {
+		auto iter = participant_map.find(client_id);
+		if (iter == participant_map.end()) { return boost::asio::ip::udp::endpoint(); }
+
+		return iter->second->get_last_client_udp_endpoint();
+	}
+
 	void print_client_vp_lists() {
 		auto full_map_iter = participant_map.begin();
 		for (; full_map_iter != participant_map.end(); ++full_map_iter) {
@@ -848,6 +860,10 @@ public:
 	tcp::endpoint tcp_endpoint_;
 	std::string client_ip_;
 	unsigned short client_port_;
+	std::string udp_client_ip_;
+	unsigned short udp_client_port_;
+	udp::endpoint last_udp_remote_endpoint_{};//make value type?
+	std::chrono::steady_clock::time_point last_seen_{};
 	std::unordered_set<uint8_t> vc_partner_ids;
 	std::unordered_set<uint8_t> vc_requestor_ids;
 	uint8_t vc_enabled;
@@ -879,9 +895,18 @@ public:
 		//shutdown_timer{ std::make_shared<boost::asio::steady_timer>(io_context)}
 		heartbeat_timer{ io_context },
 		disconnect_timer{io_context},
-		shutdown_timer{io_context}
+		shutdown_timer{io_context},
+		last_seen_{std::chrono::steady_clock::time_point::min()}
 	{
 	}
+	void update_client_endpoint(udp::endpoint ep) override {
+		last_udp_remote_endpoint_ = udp::endpoint(ep);
+		last_seen_ = std::chrono::steady_clock::now();
+	};
+	std::chrono::steady_clock::time_point get_current_timepoint() {
+		return last_seen_;
+	};
+
 	std::unordered_set<uint8_t>* get_vc_partner_ids() override {
 		return &vc_partner_ids;
 	}
@@ -904,6 +929,10 @@ public:
 	std::shared_ptr<boost::asio::ip::udp::endpoint> get_client_udp_endpoint() override {
 		return udp_remote_endpoint_;
 	}
+	boost::asio::ip::udp::endpoint get_last_client_udp_endpoint() override { 		
+		return last_udp_remote_endpoint_;
+	};
+
 	uint8_t get_vc_room_id() override {
 		return vc_room_id;
 	}
@@ -1062,7 +1091,7 @@ public:
 			//<< " id=" << int(id)
 		//	<< " vc_room_id=" << int(vc_room_id) << "\n";
 		std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
-		m->encode_header(session_token, size, vc_room_id, id);
+		m->encode_header(session_token, size, vc_room_id, id, 0);
 		//std::cout << "try_send_vc_msg()\n"
 			//<< "\tsession_token: " << session_token
 			//<< "\tsize: " << m->body_length()
@@ -1073,6 +1102,38 @@ public:
 		return true;
 	}
 	void send_message_to_playback(std::shared_ptr<voice_chat_message> recv_vc_msg_, uint8_t& sender_id) {
+		auto self = shared_from_this();
+		auto iter = vc_partner_ids.begin();
+		const uint8_t* a = (const uint8_t*)recv_vc_msg_->data();
+		int len = recv_vc_msg_->header_length;
+		std::string header_1 = std::string((char*)a, len);
+		std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+		for (; iter != vc_partner_ids.end(); ++iter) {
+			if (now - room_->get_client_last_time(*iter) > std::chrono::seconds(30)) {
+				continue;
+			}
+			auto msg_copy = std::make_shared<voice_chat_message>(*recv_vc_msg_);
+			//const uint8_t* aad = (const uint8_t*)msg_copy->data();
+			//int aad_len = msg_copy->header_length;
+			//std::string header = std::string((char*)aad, aad_len);
+			auto buffer = boost::asio::buffer(msg_copy->data(), msg_copy->length());
+			size_t size = msg_copy->length();
+			//std::shared_ptr<boost::asio::ip::udp::endpoint> ep = room_->get_client_udp_endpoint(*iter);
+			auto ep =  room_->get_last_client_udp_endpoint(*iter);	
+			if (ep.address().is_unspecified())
+				continue;
+			udp_socket_->async_send_to(buffer, ep,
+				[self, size, msg_copy, ep](boost::system::error_code ec, std::size_t bytes) {
+					if (ec) {
+					}
+					else {
+					}
+				}
+			);
+		}
+	}
+
+	void send_message_to_playback_old(std::shared_ptr<voice_chat_message> recv_vc_msg_, uint8_t& sender_id) {
 		auto self = shared_from_this();
 		auto iter = vc_partner_ids.begin();
 		const uint8_t* a = (const uint8_t*)recv_vc_msg_->data();
@@ -1902,19 +1963,6 @@ private:
 				boost::asio::placeholders::error,
 				boost::asio::placeholders::bytes_transferred));
 	}
-	void udp_start_receive_old() {
-		auto recv_vc_msg_ = std::make_shared<voice_chat_message>();
-		udp_socket_->async_receive_from(
-			boost::asio::buffer(recv_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), udp_remote_endpoint_,
-			[this, recv_vc_msg_](boost::system::error_code ec, std::size_t bytes_recvd) {
-				if (!ec) {
-					if (recv_vc_msg_->decode_header()) {
-						handle_receive_old(udp_remote_endpoint_, recv_vc_msg_);
-					}
-				}
-				udp_start_receive_old();
-			});
-	}
 	void handle_receive(/*udp::endpoint& remote_endpoint,*/ std::shared_ptr<voice_chat_message> recv_vc_msg_, const boost::system::error_code& error,
 		std::size_t) {
 		if (!error) {
@@ -1927,7 +1975,7 @@ private:
 				}
 				bool token_valid = room_->validate_token(recv_vc_msg_->sender_id, recv_vc_msg_->token);
 				if (recv_vc_msg_->token_len == voice_chat_message::token_length && token_valid) {
-					if (!room_->route_udp(recv_vc_msg_->room_id, recv_vc_msg_)) {
+					if (!room_->route_udp(recv_vc_msg_->room_id, recv_vc_msg_, udp_remote_endpoint_)) {
 						//std::cerr << "room " << recv_vc_msg_->room_id << " not found\n";
 					}
 				}
@@ -1937,31 +1985,6 @@ private:
 			}
 		}
 		udp_start_receive();
-	}
-	bool handle_receive_old(udp::endpoint remote_endpoint,std::shared_ptr<voice_chat_message> recv_vc_msg_) {
-		//std::cout << "udp recieve\n";
-		std::string client_ip = remote_endpoint.address().to_string();
-		unsigned short client_port = remote_endpoint.port();
-		std::string key = client_ip + " : " + std::to_string(client_port);
-		if (ips.insert(key).second) {
-			std::cout << "new udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
-		}
-		//std::cout << "udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
-
-		bool token_valid = room_->validate_token(recv_vc_msg_->sender_id, recv_vc_msg_->token);
-		if (recv_vc_msg_->token_len == voice_chat_message::token_length && token_valid) {
-			if(!room_->route_udp(recv_vc_msg_->room_id, recv_vc_msg_)){
-				std::cout << "search for room for udp connection from [" << client_ip << "] on port [" << client_port << "]\n";
-				std::cerr << "room " << static_cast<int>(recv_vc_msg_->room_id) << " not found\n";
-				return false;
-			}
-		}
-		else {
-			std::cerr << "bad token: token_len[" << static_cast<int>(recv_vc_msg_->token_len) << "] validate_token[" << token_valid << "]\n";
-			return false;
-		}
-		//std::cout << "accept udp connection w/ token: " << recv_vc_msg_->token << "\n";
-		return true;
 	}
 	boost::asio::ssl::context ssl_context_;
 	boost::asio::io_context& io_context_;

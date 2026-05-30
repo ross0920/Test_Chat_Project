@@ -45,13 +45,20 @@ public:
 	virtual void set_vc_room_id(uint8_t id) {};
 	virtual uint8_t get_vc_room_id() { return 0; }
 	virtual std::shared_ptr<boost::asio::ip::udp::endpoint> get_client_udp_endpoint() { return nullptr; };
+	virtual boost::asio::ip::udp::endpoint get_last_client_udp_endpoint() {
+		return boost::asio::ip::udp::endpoint();
+	};
 	virtual void read_vc_rb() {};
 	virtual void commit_read_rb(size_t size) {};
 	virtual void start_read_vc_rb() {};
 	virtual void stop_read_vc_rb() {};
 	virtual void stop_timers() {};
 	virtual bool get_feedback_option() { return false; };
-	virtual void set_feedback_option(bool val) { }
+	virtual void set_feedback_option(bool val) {};
+	virtual void update_client_endpoint(boost::asio::ip::udp::endpoint ep) {};
+	virtual std::chrono::steady_clock::time_point get_current_timepoint() {
+			return std::chrono::steady_clock::now();
+	};
 	virtual std::unordered_set<uint8_t>* get_vc_partner_ids() {
 		return nullptr;
 	};

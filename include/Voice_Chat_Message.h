@@ -13,14 +13,15 @@ public:
 	static constexpr std::size_t buffer_size = 4000;
 	static constexpr std::size_t max_body_length = buffer_size;
 	static constexpr std::size_t token_length = 16;
-	static constexpr std::size_t header_length = 1 + token_length + 1 + 1 + 2;
+	static constexpr std::size_t header_length = 1 + token_length + 1 + 1 + 1 + 2;
 	static constexpr std::size_t max_length = max_body_length + header_length;
 	uint8_t token_len;//1
 	std::string token;//16
 	uint8_t room_id;//1
 	uint8_t sender_id;//1
+	uint8_t keep_alive;//1
 	uint16_t body_length_;//2
-
+	//22
 	const uint8_t* data() const {
 		return data_;
 	}
@@ -44,7 +45,7 @@ public:
 		if (body_length_ > max_body_length)
 			body_length_ = max_body_length;
 	}
-	void encode_header(std::string token_, uint16_t new_body_length_, uint8_t room_id_, uint8_t sender_id_) {
+	void encode_header(std::string token_, uint16_t new_body_length_, uint8_t room_id_, uint8_t sender_id_, uint8_t keep_alive_) {
 		token_len = token_length;
 		//std::cout << "assigning token\n";
 		token = token_;
@@ -64,6 +65,8 @@ public:
 		std::memcpy(ptr, &sender_id_, sizeof(sender_id_));
 		ptr += sizeof(sender_id_);
 		//std::cout << "try write body_length: [" << body_length_ << "]\n";
+		std::memcpy(ptr, &keep_alive_, sizeof(keep_alive_));
+		ptr += sizeof(keep_alive_);
 		std::memcpy(ptr, &body_length_, sizeof(body_length_));
 		//std::cout << "wrote body length\n";
 	}
@@ -73,8 +76,9 @@ public:
 		token.assign(reinterpret_cast<char*>(data_ + 1), token_length);
 		room_id = (data_)[token_length + 1];
 		sender_id = data_[token_length + 2];
-		body_length_ = static_cast<uint16_t>((data_)[token_length + 3]) |
-			static_cast<uint16_t>((data_)[token_length + 4]) << 8;
+		keep_alive = data_[token_length + 3];
+		body_length_ = static_cast<uint16_t>((data_)[token_length + 4]) |
+			static_cast<uint16_t>((data_)[token_length + 5]) << 8;
 		if (body_length_ > max_body_length) { 
 			body_length_ = 0;
 			return false; }
