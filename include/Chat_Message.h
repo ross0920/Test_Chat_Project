@@ -41,7 +41,11 @@ enum class message_type : uint8_t {
 	version_check = 32,
 	no_open_room = 33,
 	voice_key = 34,
-	bad_message = 35
+	device_id_request = 35,
+	device_id_approve = 36,
+	device_id_send = 37,
+	version_approve = 38,
+	bad_message = 39
 };
 
 class chat_message {

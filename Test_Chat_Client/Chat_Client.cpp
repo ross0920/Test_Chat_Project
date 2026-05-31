@@ -2,6 +2,9 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#include <random>
+#include <sstream>
+#include <fstream>
 #include <stdio.h>
 #include <numeric>
 #include <unordered_map>
@@ -37,6 +40,7 @@
 #include <wincrypt.h>
 #include <cryptuiapi.h>
 #include <tchar.h>
+#include <ShlObj.h>           // SHGetKnownFolderPath
 #define MY_ENCODING_TYPE  (PKCS_7_ASN_ENCODING | X509_ASN_ENCODING)
 
 #define MINIAUDIO_IMPLEMENTATION
@@ -80,6 +84,8 @@ ma_uint32 NETWORK_CHANNELS = 1;
 const std::string client_version = "1.0";
 const std::string ip = "159.89.49.248";
 const std::string port = "5000";
+
+std::string device_id = "";
 
 
 //const size_t max_playback_size = 3840;
@@ -267,13 +273,18 @@ public:
 	ma_pcm_rb playback_rb;
 	size_t size;
 	OpusDecoder* decoder;
-	SimpleResampler resampler;
+	ma_linear_resampler resampler;
+	ma_linear_resampler_config resampler_cfg;
 
 	rbs(ma_device& capture_device, ma_device& playback_device) : size{},
 		decoder{ nullptr }, resampler{}
 	{
 		init_playback_rb(playback_device);
 		initialize_decoder();
+		resampler_cfg = ma_linear_resampler_config_init(NETWORK_FORMAT, NETWORK_CHANNELS,
+			SAMPLE_RATE, playback_device.sampleRate);
+		ma_linear_resampler_init(&resampler_cfg, nullptr, &resampler);
+
 	}
 	void initialize_decoder() {
 		int error = 0;
@@ -588,7 +599,6 @@ public:
 	std::array<uint8_t, 32> session_key;
 	std::array<uint8_t, 12> iv_base;
 	uint32_t send_counter = 0;
-
 	bool capture_init = false;
 	bool playback_init = false;
 	bool running_capture{ false };
@@ -605,7 +615,9 @@ enum client_state {
 	authenticated = 6,
 	receiving_request = 7,
 	bad_version = 8,
-	no_open_room = 9
+	no_open_room = 9,
+	checking_device_id = 10,
+	checking_version = 11
 };
 
 struct client_vc_room {
@@ -628,7 +640,7 @@ public:
 			window));
 	}
 
-	client_state state = client_state::awaiting_connection;
+	client_state state = client_state::awaiting_authentication;
 	std::vector<std::string>participant_names;
 	std::unordered_map<uint8_t, chat_participant>participant_map;
 	std::unordered_map<uint8_t, participant_client_data>participant_client_map;
@@ -670,6 +682,18 @@ public:
 	void try_reconnect_ssl() {
 		do_reconnect();
 	}
+	void send_device_id() {
+		//mark1
+		std::cout << "send_device_id " << device_id << "\n";
+		chat_message m;
+		m.set_message_type(message_type::device_id_send);
+		std::memcpy(m.body(), device_id.c_str(), device_id.length());
+		//std::memcpy(m.body(), "id", 2);
+		m.body_length(device_id.length());
+		m.encode_header();
+		write_ssl(m);
+	}
+
 	void send_ready_notification() {
 		chat_message msg;
 		std::string text = "ready";
@@ -786,7 +810,7 @@ public:
 					sizeof(opus_packet)
 				);
 				if (encoded_bytes <= 0) {
-					std::cout << "NETWORK SEND: encoded_bytes <= 0\n";
+					//std::cout << "NETWORK SEND: encoded_bytes <= 0\n";
 				}
 
 				uint8_t nonce[12];
@@ -811,7 +835,7 @@ public:
 					ciphertext,
 					tag
 				)) {
-					std::cout << "NETWORK SEND: encrypt fail\n";
+					//std::cout << "NETWORK SEND: encrypt fail\n";
 				}
 				uint8_t* body = (uint8_t*)m->body();
 				std::memcpy(body, &audio_ctx.send_counter, 4);
@@ -822,7 +846,7 @@ public:
 				auto buffer = boost::asio::buffer(m->data(), m->length());
 				auto self = shared_from_this();
 				audio_ctx.encode_filled = 0;
-				std::cout << "NETWORK SEND: " << encoded_bytes << " client port is " << udp_socket->local_endpoint() << "\n";
+				//std::cout << "NETWORK SEND: " << encoded_bytes << " client port is " << udp_socket->local_endpoint() << "\n";
 				udp_socket->async_send_to(buffer, server_endpoint,
 					[this, self, /*size*/consumed](boost::system::error_code ec, std::size_t bytes_sent/*std::size_t bytes*/) {
 						if (!ec) {
@@ -835,21 +859,21 @@ public:
 			}
 		}
 		ma_pcm_rb_commit_read(&audio_ctx.capture_ring_buffer, frames_to_read);
-		std::cout << "NETWORK SEND: commit_read = " << frames_to_read << "\n";
+		//std::cout << "NETWORK SEND: commit_read = " << frames_to_read << "\n";
 		return;	
 	}
 	void check_and_read_header_test() {
 		auto self = shared_from_this();
 		auto read_vc_msg_ = std::make_shared<voice_chat_message>();
-		std::cout << "NETWORK READ: heartbeat\n";
+		//std::cout << "NETWORK READ: heartbeat\n";
 		udp_socket->async_receive_from(boost::asio::buffer(read_vc_msg_->data(), voice_chat_message::header_length + voice_chat_message::max_body_length), server_endpoint,
 			[this, self, read_vc_msg_](boost::system::error_code ec, std::size_t bytes) {
-				std::cout << "NETWORK READ: async_receive_from\n";
+				//std::cout << "NETWORK READ: async_receive_from\n";
 				if (!self->audio_ctx.running_playback) {
 					boost::asio::post(io_context_, [self] {
 						self->check_and_read_header_test();
 						});	
-					std::cout << "NETWORK READ: fail !running_playback\n";
+					//std::cout << "NETWORK READ: fail !running_playback\n";
 					return;
 				}
 				if (!ec) {
@@ -857,7 +881,7 @@ public:
 						boost::asio::post(io_context_, [self] {
 							self->check_and_read_header_test();
 							});		
-						std::cout << "NETWORK READ: fail decode header\n";
+						//std::cout << "NETWORK READ: fail decode header\n";
 						return;
 					}
 					check_and_read_body_test(read_vc_msg_);
@@ -879,7 +903,7 @@ private:
 		uint8_t* body = (uint8_t*)read_vc_msg_->body();
 		uint8_t sender_id = read_vc_msg_->sender_id;
 		if (body_len < 4 + 16) {
-			std::cout << "NETWORK READ: fail body_len < 20\n";
+			//std::cout << "NETWORK READ: fail body_len < 20\n";
 			return;
 		}		
 		uint32_t counter;
@@ -897,7 +921,7 @@ private:
 		std::string header = std::string((char*)aad, aad_len);
 		uint8_t opus_packet[1500];
 		if (ct_len > sizeof(opus_packet)) {
-			std::cout << "NETWORK READ fail: cipher_text length > max opus_packet size\n";
+			//std::cout << "NETWORK READ fail: cipher_text length > max opus_packet size\n";
 			return;
 		}
 		if (!aes_gcm_decrypt(
@@ -911,7 +935,7 @@ private:
 			opus_packet
 			))
 		{
-			std::cout << "NETWORK READ: fail decrypt\n";
+			//std::cout << "NETWORK READ: fail decrypt\n";
 			return;
 		}
 		rbs& stream = audio_ctx.vc_streams.at(sender_id);
@@ -925,26 +949,39 @@ private:
 			0
 		);
 		if (decoded_frames <= 0) {
-			std::cout << "NETWORK READ fail: decoded_frames <= 0\n";
+			//std::cout << "NETWORK READ fail: decoded_frames <= 0\n";
 			return;
 		}
-		if (decoded_frames < FRAME_SIZE) {
+		/*if (decoded_frames < FRAME_SIZE) {
 			std::memset(pcm_out.data() + decoded_frames, 0, (FRAME_SIZE - decoded_frames) * sizeof(float));
 			decoded_frames = FRAME_SIZE;
-		}
-		ma_uint32 max_frames = FRAME_SIZE * 10;
+		}*/
+		ma_uint64 in_frames = decoded_frames;
+		ma_uint64 out_frames;
+		ma_linear_resampler_get_expected_output_frame_count(
+			&stream.resampler, in_frames, &out_frames);
+		std::vector<float>out_buffer(out_frames);
+		ma_linear_resampler_process_pcm_frames(
+			&stream.resampler,
+			pcm_out.data(),
+			&in_frames,
+			out_buffer.data(),
+			&out_frames
+		);
+
+		/*ma_uint32 max_frames = FRAME_SIZE * 10;
 		ma_uint32 readable = ma_pcm_rb_available_read(&stream.playback_rb);
 		if (readable > max_frames) {
 			ma_pcm_rb_seek_read(&stream.playback_rb, readable - max_frames);
 		}
-		ma_uint64 out_frames = decoded_frames;
+		//ma_uint64 out_frames = decoded_frames;
 		size_t avail = ma_pcm_rb_available_write(&stream.playback_rb);
 		size_t needed = out_frames;
 		if (avail < needed) {
 			size_t drop = needed - avail;
 			drop -= drop % FRAME_SIZE; 
 			ma_pcm_rb_seek_read(&stream.playback_rb, drop);
-		}
+		}*/
 		ma_uint32 frames_to_write = (ma_uint32)out_frames;
 		ma_uint32 frames_written = frames_to_write;
 		void* pOut = nullptr;
@@ -954,15 +991,16 @@ private:
 			&pOut
 		);
 		if (result != MA_SUCCESS || frames_written == 0) {
-			std::cout << "NETWORK READ fail: frames_written == " << frames_written << 
-				" result = " << result << "\n";
+			//std::cout << "NETWORK READ fail: frames_written == " << frames_written << 
+				//" result = " << result << "\n";
 			return;
 		}
 		ma_uint32 bpf = audio_ctx.bytes_per_frame_playback;
 		size_t bytes_to_write = frames_written * bpf;
-		std::memcpy(pOut, pcm_out.data(), bytes_to_write);
+		//std::memcpy(pOut, pcm_out.data(), bytes_to_write);
+		std::memcpy(pOut, out_buffer.data(), bytes_to_write);
 		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
-		std::cout << "NETWORK READ: commit frames_written = " << frames_written << "\n";
+		//std::cout << "NETWORK READ: commit frames_written = " << frames_written << "\n";
 	}
 
 
@@ -998,6 +1036,7 @@ private:
 		}
 	}
 	void send_authentication() {
+		std::cout << "send auth\n";
 		chat_message auth;		
 		auth.body_length(key.length());
 		auth.set_message_type(message_type::authentication_response);
@@ -1092,7 +1131,7 @@ void heartbeat_ping(chat_message& m) {
 	write_ssl(msg);
 }
 void udp_heartbeat_ping() {
-	std::cout << "udp_heartbeat_ping\n";
+	//std::cout << "udp_heartbeat_ping\n";
 	std::shared_ptr<voice_chat_message> m = std::make_shared<voice_chat_message>();
 	uint16_t body_len = (uint16_t)(0); 
 	m->encode_header(session_token, body_len, vc_room_id, me.id, 1);
@@ -1226,7 +1265,6 @@ bool aes_gcm_encrypt(
 		msg.body_length(sizeof(me.id));
 		msg.encode_header();
 		write_ssl(msg);
-
 	}
 	void process_msg_type(chat_message& m) {
 		switch (m.msg_type) {
@@ -1263,8 +1301,13 @@ bool aes_gcm_encrypt(
 				authenticated = true;
 				state = client_state::authenticated;
 				session_token = decode_session_token(m);
-				me.session_token = session_token;				
-				send_start_room_request();
+				me.session_token = session_token;
+				state = client_state::checking_device_id;
+				//send_device_id();
+				send_version();
+				std::cout << "authentication approved send device\n";
+
+				//send_start_room_request();
 				break;
 			case message_type::authentication_reject:
 				session_token = "bad";
@@ -1335,6 +1378,10 @@ bool aes_gcm_encrypt(
 				state = client_state::bad_version;
 				break;
 			}
+			case message_type::version_approve: {
+				state = client_state::ready;
+				send_start_room_request();
+			}
 			case message_type::no_open_room: {
 				std::string error_message = std::string(m.body(), m.body_length());
 				state = client_state::no_open_room;
@@ -1343,7 +1390,14 @@ bool aes_gcm_encrypt(
 			case message_type::voice_key: {
 				//std::cout << "receive voice_key\n";
 				store_voice_session_key(m);
+				break;
 			}
+			case message_type::device_id_approve: {
+				state = client_state::checking_version;
+				send_version();
+				break;
+			}
+
 			default:
 			{ break; }
 		}
@@ -1357,7 +1411,7 @@ bool aes_gcm_encrypt(
 				std::cout << "async_connect running?\n";
 				if (!ec) {
 					retry_delay = 1;
-					state = client_state::ready;
+					//state = client_state::ready;
 					timer_->cancel();
 					do_read_header();
 				}
@@ -1385,7 +1439,7 @@ bool aes_gcm_encrypt(
 		}
 	}
 	void do_reconnect() {
-	//	std::cout << "do_reconnect\n";
+		std::cout << "do_reconnect\n";
 		boost::system::error_code ec;
 		ssl_socket_->lowest_layer().cancel(ec);
 		ssl_socket_->lowest_layer().close(ec);
@@ -1397,40 +1451,43 @@ bool aes_gcm_encrypt(
 		state = client_state::connecting;
 		//auto self = shared_from_this();
 		steady_timer_.expires_after(boost::asio::chrono::milliseconds(500));
-		//std::cout << "do timer wait\n";
+		std::cout << "do timer wait\n";
 		auto self = shared_from_this();
 		steady_timer_.async_wait([self](const boost::system::error_code& ec) {
-		//	std::cout << "start call to reconnect\n";
+		std::cout << "start call to reconnect\n";
 			self->handle_reconnect_timer(ec); });
-		//std::cout << "timer wait done\n";
+		std::cout << "timer wait done\n";
 	}
 	void handshake_test() {
-		//std::cout << "start handshake\n";
+		std::cout << "start handshake\n";
 		ssl_socket_->async_handshake(boost::asio::ssl::stream_base::client,
 			[this](const boost::system::error_code& error) {
 				if (!error) {
-					//std::cout << "handshake succeed\n";
-					state = client_state::ready;
+					std::cout << "handshake succeed\n";
+					//state = client_state::ready;
 					do_read_header_ssl();
 				}
 				else {
 					do_reconnect();
-					//std::cout << "handshake failed: " << error.message() << "\n";
+					std::cout << "handshake failed: " << error.message() << "\n";
 				}
 			});
 	}
 	void do_connect_ssl_test(const tcp::resolver::results_type& endpoints) {
+		std::cout << "do_connect_ssl_test()\n";
 		auto resolver = std::make_shared<tcp::resolver>(io_context_);
 		//auto endpoints = resolver.resolve(argv[1], argv[2]);
 		auto endpoints_new = resolver->resolve(ip, port);
 		boost::asio::async_connect(ssl_socket_->lowest_layer(), endpoints_new,
 			[this](const boost::system::error_code& error,
 				const tcp::endpoint& /*endpoint*/) {
-					//std::cout << "do_connect_ssl_test()\n";
+					std::cout << "do_connect_ssl_test() lambda\n";
 					if (!error) {
+						
 						handshake_test();
 					}
-					else {
+					else {	
+						std::cout << "do_ssl_connect_test fail, do reconnect\n";
 						do_reconnect();
 					}
 			});
@@ -1440,7 +1497,7 @@ bool aes_gcm_encrypt(
 			[this](const boost::system::error_code& error,
 				const tcp::endpoint& /*endpoint*/) {
 					if (!error) {
-						//std::cout << "do connect ssl\n";
+						std::cout << "do connect ssl\n";
 						retry_delay = 1;
 						//do not set ready state until handshake is completed. it will send message to server expecting a tls handshake and cause
 						// that handshake to fail.
@@ -1475,11 +1532,12 @@ bool aes_gcm_encrypt(
 			[this](const boost::system::error_code& error) {
 				if (!error) {
 					//std::cout << "handshake succeed\n";
-					state = client_state::ready;
+					//state = client_state::ready;
 					do_read_header_ssl();
 				}
 				else {
 					state = client_state::awaiting_connection;
+					do_reconnect();
 					//std::cout << "handshake failed: " << error.message() << "\n";
 				}
 			});
@@ -1514,41 +1572,38 @@ bool aes_gcm_encrypt(
 		boost::asio::async_read(*ssl_socket_,
 			boost::asio::buffer(read_msg_.data(), chat_message::header_length),
 			[this](boost::system::error_code ec, std::size_t) {
-				//std::cout << "decode_header ssl()\n";
+				std::cout << "decode_header ssl()\n";
+
 				if (!ec && read_msg_.decode_header()) {
+					std::cout << "!ec = " << ec.message() << "\n";
+					std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
+					std::cout << "read msg header success[" << header << "] body [" << body << "]\n";
+
 					do_read_body_ssl();
 				}
 				else {
-					//std::cout << "decode_header faifl\n";
+				
+					std::cout << "decode_header fail or ec: " << ec.message() << "\n";
+					std::string header = std::string(read_msg_.data(), chat_message::header_length);
+					std::string body = std::string(read_msg_.body(), read_msg_.body_length());
+					std::cout << "read msg header fail[" << header << "] body [" << body << "]\n";
 					mic_test = false;
 					me.vc_state = voice_chat_state::none;
 					//std::cout << "state = " << state << "\n";
 					if (state != client_state::bad_version && state != client_state::no_open_room) {
 						state = client_state::awaiting_connection;
+						do_reconnect();
 					}
-					/*if (udp_socket && udp_socket->is_open()) {
-						udp_socket->cancel(ec);
-						udp_socket->close(ec);
-					}	*/				
+					std::cout << "close ops\n";
 					udp_socket->cancel(ec);
 					udp_socket->close(ec);
-
 					udp_port_client = 0;
-					/*if (ssl_socket_) {
-						auto& sock = ssl_socket_->lowest_layer();
-						if (sock.is_open()) {
-							sock.cancel(ec);
-							sock.close(ec);
-						}
-					}	*/		
-					//ssl_socket_->lowest_layer().cancel();
-					ssl_socket_->lowest_layer().close();
-					//steady_timer_.cancel();
 					msg_history.clear();
 					participant_names.clear();
-					//participants.clear();
 					participant_map.clear();
 					participant_client_map.clear();
+					std::cout << "close ops done\n";
 				}
 			}
 		);
@@ -1590,9 +1645,9 @@ bool aes_gcm_encrypt(
 					process_msg_type(read_msg_);
 				}
 				else {
-					//std::cout << "server disconnect body: " << ec.message() << "\n";
+					std::cout << "server disconnect body: " << ec.message() << "\n";
 					state = client_state::awaiting_connection;
-					ssl_socket_->lowest_layer().close();
+					do_reconnect();
 					msg_history.clear();
 					participant_names.clear();
 					//participants.clear();
@@ -1650,17 +1705,17 @@ bool aes_gcm_encrypt(
 		);
 	}
 	void do_write_ssl() {
-		//std::cout << "do_write_ssl()\n";
+		std::cout << "do_write_ssl()\n";
 		boost::asio::async_write(*ssl_socket_,
 			boost::asio::buffer(write_msgs_.front().data(), write_msgs_.front().length()),
 			[this](boost::system::error_code ec, std::size_t) {
 				std::string header = std::string(write_msgs_.front().data(), chat_message::header_length);
 				std::string body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
-				//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+				std::cout << "write msg header[" << header << "] body [" << body << "]\n";
 				if (!ec) {
-					if (write_msgs_.front().msg_type == message_type::ready_notification) {
+					/*if (write_msgs_.front().msg_type == message_type::ready_notification) {
 						state = client_state::awaiting_authentication;
-					}
+					}*/
 					if (write_msgs_.front().msg_type == message_type::authentication_response) {
 						std::string auth_body = std::string(write_msgs_.front().body(), write_msgs_.front().body_length());
 						state = client_state::awaiting_authentication;
@@ -1671,9 +1726,9 @@ bool aes_gcm_encrypt(
 					}
 				}
 				else {
-					//std::cout << "server disconnect do_write_ssl: " << ec.message() << "\n";
+					std::cout << "server disconnect do_write_ssl: " << ec.message() << "\n";
 					state = client_state::awaiting_connection;
-					ssl_socket_->lowest_layer().close();
+					do_reconnect();
 					msg_history.clear();
 					participant_names.clear();
 					//participants.clear();
@@ -1733,8 +1788,8 @@ private:
 		session_token = "";
 		auto client_ep = udp_socket->local_endpoint();
 		udp_port_client = client_ep.port();
-		std::cout << "UDP open: " << udp_socket->is_open() << "\n";
-		std::cout << "UDP bound to: " << udp_socket->local_endpoint() << "\n";
+		//std::cout << "UDP open: " << udp_socket->is_open() << "\n";
+		//std::cout << "UDP bound to: " << udp_socket->local_endpoint() << "\n";
 	}
 };
 void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
@@ -1783,7 +1838,7 @@ void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFrames
 			ctx->mix_buffer[i] += temp[i];
 		}
 		ma_pcm_rb_commit_read(&stream.playback_rb, frames_to_read);
-		std::cout << "PLAYBACK_CALLBACK: frames_to_read = " << frames_to_read << "\n";
+		//std::cout << "PLAYBACK_CALLBACK: frames_to_read = " << frames_to_read << "\n";
 	}
 	std::memcpy(out, ctx->mix_buffer.data(), total_samples * sizeof(float));
 }
@@ -1825,7 +1880,7 @@ void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesI
 			break;
 		}
 		framesWritten += framesToWrite;
-		std::cout << "CAPTURE_CALLBACK: framesWritten = " << framesWritten << "\n";
+		//std::cout << "CAPTURE_CALLBACK: framesWritten = " << framesWritten << "\n";
 		//ctx->c->schedule_check_and_send_test();
 	}
 }
@@ -1925,7 +1980,7 @@ bool participant_header_enabled = false;
 
 void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 	ImGuiViewport* viewport = ImGui::GetMainViewport();
-	//std::cout << "draw chat window\n";
+	std::cout << "draw chat window\n";
 	ImVec2 display = ImGui::GetIO().DisplaySize;
 	ImVec2 size(display.x, display.y);
 	ImVec2 position((display.x - size.x) * 0.5f,
@@ -1944,22 +1999,38 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 		ImGuiWindowFlags_NoBringToFrontOnFocus |
 		ImGuiWindowFlags_NoNav |
 		ImGuiWindowFlags_MenuBar;
-	if (c->state == client_state::bad_version) {
-		draw_error_window(c, window, size, position, "unsupported client version. update at magoogan.duckdns.org");
+	//std::cout << "c->state = " << static_cast<int>(c->state) << "\n";
+	std::cout << "1\n";
+	if (c->state == client_state::awaiting_authentication || c->state == client_state::checking_device_id || c->state == client_state::checking_version) {
+		draw_start_connection_window(c, window, size, position);
 		return;
 	}
-	if (c->state == client_state::no_open_room) {
-		draw_error_window(c, window, size, position, "no open rooms. try again later.");
-		return;
-	}
+	std::cout << "2\n";
+
 	if (c->state == client_state::awaiting_connection || c->state == client_state::connecting || !authenticated) {
 		draw_disconnect_window(c, window, size, position);
 		return;
 	}
-	if (c->state == client_state::ready || c->state == client_state::awaiting_authentication) {
-		draw_start_connection_window(c, window, size, position);
+	std::cout << "3\n";
+
+	if (c->state == client_state::bad_version) {
+		draw_error_window(c, window, size, position, "unsupported client version. update at magoogan.duckdns.org");
 		return;
 	}
+	std::cout << "4\n";
+
+	if (c->state == client_state::no_open_room) {
+		draw_error_window(c, window, size, position, "no open rooms. try again later.");
+		return;
+	}
+	std::cout << "5\n";
+
+	if (c->state != client_state::ready) { 
+		draw_disconnect_window(c, window, size, position);
+		return; 
+	}
+	std::cout << "6\n";
+
 	if (ImGui::IsMouseClicked(0)) {
 		first_enter = false;
 	}
@@ -2084,7 +2155,6 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 
 	ImGui::End();
 	//std::cout << "draw chat window end\n";
-
 }
 void enter_name_window(std::shared_ptr<chat_client>& c) {
 	static bool no_resize = true;
@@ -2156,9 +2226,6 @@ void draw_start_connection_window(std::shared_ptr<chat_client>& c, GLFWwindow* w
 	dots = std::fmod(dots + static_cast<float>(delta_time.count()), 4);
 	ImGui::Text(text.c_str());
 	ImGui::End();
-	if (c->state == client_state::ready) {
-		c->send_version();
-	}
 }
 void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window, ImVec2& size, ImVec2& position) {
 	static bool no_resize = true;
@@ -2182,9 +2249,6 @@ void draw_disconnect_window(std::shared_ptr<chat_client>& c, GLFWwindow* window,
 	dots = std::fmod(dots + static_cast<float>(delta_time.count()),4);
 	ImGui::Text(text.c_str());
 	ImGui::End();
-	if(c->state == client_state::awaiting_connection){
-		c->try_reconnect_ssl();
-	}
 }
 template<typename Func>
 void call_imgui(Func imgui_logic, GLFWwindow* window, std::shared_ptr<chat_client>& c) {
@@ -2231,12 +2295,72 @@ void worker_thread() {
 	//exit thread
 }
 
+//https://www.daniweb.com/programming/software-development/threads/475634/creating-a-txt-file-and-saving-it-to-a-desired-location
+bool get_folder_path(std::string& path) {
+	PWSTR p = nullptr;	
+	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p))) {
+		std::filesystem::path base = std::filesystem::path(p);
+		CoTaskMemFree(p);
+		std::filesystem::path folder = base / "Test_Chat_Client";
+		std::filesystem::create_directories(folder);
+		std::filesystem::path out = folder / "device_id.txt";
+		path = out.string();
+		return true;
+	}
+	return false;
+}
+//https://stackoverflow.com/questions/24365331/how-can-i-generate-uuid-in-c-without-using-boost-library
+bool create_device_id(std::string& d_id) {
+	std::string path = "";
+	if (!get_folder_path(path)) { return false; }
+	std::cout << "path = " << path << "\n";
+	std::ifstream in{ path };
+	if (in.good()) {
+		std::string id;
+		std::getline(in, id);
+		if (!id.empty()) {
+			d_id = id;
+			return true;
+		}
+	}
+	std::random_device              rd;
+	std::mt19937                    gen(rd());
+	std::uniform_int_distribution<> dis(0, 15);
+	std::uniform_int_distribution<> dis2(8, 11);
+	std::stringstream ss;
+	int i;
+	ss << std::hex;
+	for (i = 0; i < 8; i++) {
+		ss << dis(gen);
+	}
+	ss << "-";
+	for (i = 0; i < 4; i++) {
+		ss << dis(gen);
+	}
+	ss << "-4";
+	for (i = 0; i < 3; i++) {
+		ss << dis(gen);
+	}
+	ss << "-";
+	ss << dis2(gen);
+	for (i = 0; i < 3; i++) {
+		ss << dis(gen);
+	}
+	ss << "-";
+	for (i = 0; i < 12; i++) {
+		ss << dis(gen);
+	};
+	std::ofstream out(path);
+	out << ss.str();
+	d_id = ss.str();
+	return true;
+}
 
 int main(int argc, char* argv[])
 {	 
 	const std::string cert_leaf = "isrg_cert.pem";
 	std::filesystem::path cert_path = std::filesystem::current_path();
-	std::cout << "cert_path = " << cert_path << "\n";
+	//std::cout << "cert_path = " << cert_path << "\n";
 	cert_path.append(cert_leaf);
 	std::string pem = cert_path.string();
 	msg_history.reserve(100);
@@ -2275,6 +2399,11 @@ int main(int argc, char* argv[])
 
 	running = false;
 
+	if (!create_device_id(device_id)) {
+		std::cerr << "fail id\n";
+		return -1;
+	}
+
 	try {
 		boost::asio::ssl::context ssl_context(boost::asio::ssl::context::tls_client);//tlsv12_client
 		ssl_context.set_verify_mode(boost::asio::ssl::verify_peer);
@@ -2297,7 +2426,6 @@ int main(int argc, char* argv[])
 		boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard(io_context.get_executor());
 		char line[chat_message::max_body_length + 1];
 		static ImGuiID last_active_id = 0;
-		c->state = client_state::awaiting_connection;
 		while (!glfwWindowShouldClose(window))
 		{
 			current_time = std::chrono::steady_clock::now();
