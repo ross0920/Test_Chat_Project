@@ -328,7 +328,7 @@ public:
 
 	bool route_udp(uint8_t vc_room_id_, std::shared_ptr<voice_chat_message> recv_vc_msg_, boost::asio::ip::udp::endpoint ep_) {
 		if (recv_vc_msg_->keep_alive == 1) {
-			std::cout << "KEEP ALIVE UDP PACKET from " << static_cast<int>(recv_vc_msg_->sender_id) << "\n";
+			//std::cout << "KEEP ALIVE UDP PACKET from " << static_cast<int>(recv_vc_msg_->sender_id) << "\n";
 			participant_map.at(recv_vc_msg_->sender_id)->update_client_endpoint(ep_);
 			return false;
 		}
@@ -450,7 +450,8 @@ public:
 		backtrace_symbols_fd(callstack, frames, STDERR_FILENO);
 		std::cout << "participant w/ id " << static_cast<int>(participant->id) << " leave chat room\n";*/
 		//remove token
-		if (!participant->id) { /*std::cout << "participant id is 0. not leaving room\n";*/ return; }
+		device_ids.erase(participant->get_device_id());
+		if (!participant->id) { std::cout << "participant id is 0. not leaving room\n"; return; }
 		//std::cout << "clean_vc_hash\n";
 		participant->set_vc_enabled(0);
 		clean_vc_hash(participant->id);
@@ -465,6 +466,7 @@ public:
 		//leave chat room
 		release_id(participant->id);
 		//std::cout << "release_id()\n";
+		std::cout << "clear device id " << participant->get_device_id() << "\n";
 		participant->stop_timers();
 		//std::cout << "stop_timers\n";
 		participant->stop_read_vc_rb();
@@ -910,8 +912,11 @@ public:
 		last_udp_remote_endpoint_ = udp::endpoint(ep);
 		last_seen_ = std::chrono::steady_clock::now();
 	};
-	std::chrono::steady_clock::time_point get_current_timepoint() {
+	std::chrono::steady_clock::time_point get_current_timepoint() override {
 		return last_seen_;
+	};
+	std::string get_device_id() override { 
+		return device_id;
 	};
 
 	std::unordered_set<uint8_t>* get_vc_partner_ids() override {
@@ -956,7 +961,6 @@ public:
 		deliver(msg);
 	}*/
 	void send_authentication_request() {
-		std::cout << "send auth request\n";
 		chat_message auth;
 		std::string text = "gimme auth";
 		auth.body_length(text.length());
@@ -973,16 +977,17 @@ public:
 		deliver(m);
 	}
 	void wait_for_ready() {
-		std::cout << "wait_for_ready()\n";
+		//std::cout << "wait_for_ready()\n";
 		state_ = session_state::wait;
 		authenticated = false;
 		version_validated = false;
 		device_id = "";
 		id = 0;
-		send_authentication_request();	
 		do_read_header_ssl();
+		//send_authentication_request();	
 	}
 	void send_room_full_notice() {
+		std::cout << "ROOM FULL NOTICE!\n";
 		chat_message m;
 		std::string c = "no open rooms\n";
 		std::memcpy(m.body(), c.c_str(), c.length());
@@ -1334,12 +1339,12 @@ private:
 	bool verify_authorization_response(chat_message& msg) {
 		std::string p = std::string(msg.body(), msg.body_length());
 		if (p.find(key) != std::string::npos) {
-			std::cout << "auth verified!!!\n";
+			//std::cout << "auth verified!!!\n";
 			session_token = generate_token();
-			std::cout << "session_token[" << session_token << "]\n";
+			//std::cout << "session_token[" << session_token << "]\n";
 			return true;
 		}
-		std::cout << "auth not verified!!\n";
+		//std::cout << "auth not verified!!\n";
 		return false;
 	}
 	bool verify_version(chat_message& msg) {
@@ -1350,7 +1355,7 @@ private:
 			return false;
 		}
 		std::string version(msg.body(), msg.body_length());
-		std::cout << "client_version = " << version << "\n";
+		//std::cout << "client_version = " << version << "\n";
 		if (version != current_version) {
 			std::cout << "bad version\n";
 			chat_message m;
@@ -1410,17 +1415,17 @@ private:
 		deliver(m);
 	}
 	bool store_device_id(chat_message& m) {
-		std::cout << "store device id\n";
+		//std::cout << "store device id\n";
 		std::string device_id_ = std::string(m.body(), m.body_length());
-		std::cout << "device id = " << device_id_ << "\n";
+		//std::cout << "device id = " << device_id_ << "\n";
 		auto iter = room_->device_ids.find(device_id_);
 		if (iter != room_->device_ids.end()) {
-			std::cout << "store device id false\n";
+			//std::cout << "store device id false\n";
 			return false;
 		}
 		room_->device_ids.insert(device_id_);
 		device_id = device_id_;
-		std::cout << "store device id true\n";
+		//std::cout << "store device id true\n";
 		return true;
 	}
 	void device_id_approve() {
@@ -1432,21 +1437,22 @@ private:
 		deliver(m);
 	}
 	void do_shutdown(chat_session& obj, std::shared_ptr<chat_session> self) {
+		room_->leave(self);
 		obj.ssl_socket_.async_shutdown(
 			[self](const boost::system::error_code& ec) {
 				auto& obj = *self;
-				boost::system::error_code ignored;
+				boost::system::error_code ignored;				
 				obj.ssl_socket_.lowest_layer().close(ignored);
 			});
 	}
 	void do_handshake() {
-		std::cout << "do_handshake()\n";
+		//std::cout << "do_handshake()\n";
 		auto self(shared_from_this());
 		ssl_socket_.async_handshake(boost::asio::ssl::stream_base::server,
 			[self](const boost::system::error_code& ec) {
 				auto& obj = *self;
 				if (!ec) {
-					std::cout << "handshake success\n";
+					//std::cout << "handshake success\n";
 					obj.wait_for_ready();
 				}
 				else {
@@ -1505,10 +1511,12 @@ private:
 					//std::string body = std::string(read_msg_.body(), read_msg_.body_length());
 					//std::cout << "read msg header[" << header << "] body [" << body << "]\n";
 					//validate client is authorized!! TODO
+					//std::cout << "check !obj.authenticated\n";
 					if (!obj.authenticated) {
+						//std::cout << "check obj.read_msg_.msg_type == message_type::authentication_response\n";
 						if (obj.read_msg_.msg_type == message_type::authentication_response) {
 							if (obj.verify_authorization_response(obj.read_msg_)) {
-								std::cout << "send authentication approve\n";
+								//std::cout << "send authentication approve\n";
 								chat_message m;
 								m.body_length(obj.session_token.length());//16 bytes/chars
 								m.set_message_type(message_type::authentication_approve);
@@ -1522,30 +1530,34 @@ private:
 							else {
 								self->start_shutdown();
 							}
+							obj.do_read_header_ssl();
 							return;
 						}
 					}
-					std::cout << "checking device_id\n";
-					/*if (obj.device_id == "") {
+					//std::cout << "check device_id\n";
+					if (obj.device_id == "") {
 						if (obj.read_msg_.msg_type == message_type::device_id_send) {
-							std::cout << " receive device_id_request\n";
+							//std::cout << " receive device_id_request\n";
 							if (obj.store_device_id(obj.read_msg_)) {
-								std::cout << "device id approve\n";
+								//std::cout << "device id approve\n";
 								obj.device_id_approve();
 							}
 							else {
-								std::cout << "device_id not stored\n";
+								//std::cout << "device_id not stored\n";
 								self->start_shutdown();
 							}						
 						}
+						obj.do_read_header_ssl();
 						return;
-					}*/
+					}
+					//std::cout << "check version\n";
+
 					if (!obj.version_validated) {
 						std::cout << "validate version\n";
 						if (obj.read_msg_.msg_type == message_type::version_check) {
 							obj.version_validated = obj.verify_version(obj.read_msg_);
 							if (!obj.version_validated) {
-								std::cout << "version not validated\n";
+								//std::cout << "version not validated\n";
 								self->start_shutdown();
 								return;
 							}
@@ -1554,108 +1566,115 @@ private:
 								obj.version_approve();
 							}
 						}
+						obj.do_read_header_ssl();
 						return;
 					}	
+					//std::cout << "proceed to switch with msg_type : " << static_cast<int>(obj.read_msg_.msg_type) << "\n";
 					switch (obj.read_msg_.msg_type) {
-					case(message_type::no_open_room): {
-						obj.do_shutdown(obj, self);
-					}
-					case(message_type::start_room_request): {
-							if (obj.room_->participant_map.size() >= max_participants) {
-								//std::cout << "room full! name = " << obj.name << "\n";
-								obj.send_room_full_notice();
-								obj.stop_heartbeat();
-							}
-							//TODO redundant 5/31/26
-							if (obj.room_->check_room_full()) {
-								obj.reject();
-							}
-							else {
-								obj.start();
-								obj.start_heartbeat();
-								obj.start_disconnect_timer();
-							}						
-						break;
-					}
-					case(message_type::name_change_request): {
-						obj.state_ = session_state::awaiting_name;
-						//name is preceded by uint8_t id
-						std::string name(obj.read_msg_.body() + sizeof(uint8_t), obj.read_msg_.body_length() - sizeof(uint8_t));
-						obj.room_->leave(obj.shared_from_this());
-						//std::cout << "leave new name = " << name << "\n";
-						if (!name.empty()) {
-							uint8_t id = 0;
-							std::memcpy(&id, obj.read_msg_.body(), sizeof(uint8_t));
-							obj.change_name(name);
-							//std::cout << "name changed\n";
-							//this->id = id;
-							obj.room_->join(obj.shared_from_this());
-							obj.room_->update_client_participants();
+						case(message_type::no_open_room): {
+							obj.do_shutdown(obj, self);
 						}
-						break;
-					}
-					case(message_type::chat): {
-						std::string full_msg = obj.name + ": ";
-						full_msg.append(obj.read_msg_.body(), obj.read_msg_.body_length());
-						obj.read_msg_.body_length(full_msg.length());
-						memcpy(obj.read_msg_.body(), full_msg.c_str(), obj.read_msg_.body_length());
-						obj.read_msg_.encode_header();
-						obj.room_->deliver(obj.read_msg_);
-						break;
-					}
-					case(message_type::send_vc_request): {
-						obj.room_->send_vc_request(obj.read_msg_);
-						break;
-					}
-					case(message_type::reject_vc_request): {
-						obj.room_->reject_vc_request(obj.read_msg_);
-						break;
-					}
-					case(message_type::accept_vc_request): {
-						obj.room_->accept_vc_request(obj.read_msg_);
-						break;
-					}
-					case(message_type::send_udp_port): {
-						//std::cout << "got send_udp_port\n";
-						obj.store_client_udp_port(obj.read_msg_);//TODO code review this
-						break;
-					}
-					case(message_type::mic_test): {
-						obj.room_->accept_mic_check_request(obj.read_msg_);
-						obj.set_feedback_option(true);
-						break;
-					}
-					case(message_type::end_vc): {
-						//room_->send_vc_leave_notification(shared_from_this());
-						//room_->send_vc_leave_notifications(shared_from_this());
-						obj.room_->leave_vc_room(obj.shared_from_this());
-						break;
-					}
-					case(message_type::vc_status_check): {
-						obj.room_->update_vc_status(obj.read_msg_);
-						//room_->get_receiver_vc_status(read_msg_);
-						//don't do a status check. 
-						//check if enabling or disabling vc
-						//if enabling, just add the receiver to the sender vc_partner_ids hash
-						//then check the receiver's vc_partner_ids hash to see if he has sender
-						//if both have, then start vc
-						//if disabling, check if receiver has sender in vc_partner_ids
-						//yes? then remove
-						//server will send to client his hash of vc_partners, and client will then
-						//copy that to his own hash and send vc messages to them, which will be routed by server
-					}
-					case(message_type::vc_status_response): {
-						//obj.room_->handle_vc_status_response(obj.read_msg_);
-						break;
-					}
-					case(message_type::heartbeat): {
-						obj.reset_disconnect(obj.read_msg_);
-						break;
-					}
-					case(message_type::leave): {
-						//std::cout << "messag_type::leave\n";
-						obj.room_->leave(obj.shared_from_this());
-					}
+						case(message_type::start_room_request): {
+								if (obj.room_->participant_map.size() >= max_participants) {
+									//std::cout << "room full! name = " << obj.name << "\n";
+									obj.send_room_full_notice();
+									obj.stop_heartbeat();
+								}
+								//TODO redundant 5/31/26
+								if (obj.room_->check_room_full()) {
+									//std::cout << "reject room full\n";
+									obj.reject();
+								}
+								else {
+									//std::cout << "start!\n";
+									obj.start();
+									obj.start_heartbeat();
+									obj.start_disconnect_timer();
+								}						
+							break;
+						}
+						case(message_type::name_change_request): {
+							obj.state_ = session_state::awaiting_name;
+							//name is preceded by uint8_t id
+							std::string name(obj.read_msg_.body() + sizeof(uint8_t), obj.read_msg_.body_length() - sizeof(uint8_t));
+							if (obj.id != 0) {
+								obj.room_->leave(obj.shared_from_this());
+							}
+							//std::cout << "leave new name = " << name << "\n";
+							if (!name.empty()) {
+								uint8_t id = 0;
+								std::memcpy(&id, obj.read_msg_.body(), sizeof(uint8_t));
+								obj.change_name(name);
+								//std::cout << "name changed\n";
+								//this->id = id;
+								obj.room_->join(obj.shared_from_this());
+								obj.room_->update_client_participants();
+							}
+							break;
+						}
+						case(message_type::chat): {
+							std::string full_msg = obj.name + ": ";
+							full_msg.append(obj.read_msg_.body(), obj.read_msg_.body_length());
+							obj.read_msg_.body_length(full_msg.length());
+							memcpy(obj.read_msg_.body(), full_msg.c_str(), obj.read_msg_.body_length());
+							obj.read_msg_.encode_header();
+							obj.room_->deliver(obj.read_msg_);
+							break;
+						}
+						case(message_type::send_vc_request): {
+							obj.room_->send_vc_request(obj.read_msg_);
+							break;
+						}
+						case(message_type::reject_vc_request): {
+							obj.room_->reject_vc_request(obj.read_msg_);
+							break;
+						}
+						case(message_type::accept_vc_request): {
+							obj.room_->accept_vc_request(obj.read_msg_);
+							break;
+						}
+						case(message_type::send_udp_port): {
+							//std::cout << "got send_udp_port\n";
+							obj.store_client_udp_port(obj.read_msg_);//TODO code review this
+							break;
+						}
+						case(message_type::mic_test): {
+							obj.room_->accept_mic_check_request(obj.read_msg_);
+							obj.set_feedback_option(true);
+							break;
+						}
+						case(message_type::end_vc): {
+							//room_->send_vc_leave_notification(shared_from_this());
+							//room_->send_vc_leave_notifications(shared_from_this());
+							obj.room_->leave_vc_room(obj.shared_from_this());
+							break;
+						}
+						case(message_type::vc_status_check): {
+							obj.room_->update_vc_status(obj.read_msg_);
+							//room_->get_receiver_vc_status(read_msg_);
+							//don't do a status check. 
+							//check if enabling or disabling vc
+							//if enabling, just add the receiver to the sender vc_partner_ids hash
+							//then check the receiver's vc_partner_ids hash to see if he has sender
+							//if both have, then start vc
+							//if disabling, check if receiver has sender in vc_partner_ids
+							//yes? then remove
+							//server will send to client his hash of vc_partners, and client will then
+							//copy that to his own hash and send vc messages to them, which will be routed by server
+						}
+						case(message_type::vc_status_response): {
+							//obj.room_->handle_vc_status_response(obj.read_msg_);
+							break;
+						}
+						case(message_type::heartbeat): {
+							obj.reset_disconnect(obj.read_msg_);
+							break;
+						}
+						case(message_type::leave): {
+							std::cout << "messag_type::leave\n";
+							obj.room_->leave(obj.shared_from_this());
+							break;
+						}
 					}
 					obj.do_read_header_ssl();
 				}
@@ -1691,7 +1710,7 @@ private:
 							authenticated = true;
 						}
 						else {
-							send_authentication_request();
+							//send_authentication_request();
 							authenticated = false;
 							//room_->leave(shared_from_this());
 						}
@@ -1795,10 +1814,10 @@ private:
 			{
 				auto& obj = *self;
 				if (!ec) {
-					std::string header = std::string(msg.data(), chat_message::header_length);
-					std::string body = std::string(obj.write_msgs_.front().body(), obj.write_msgs_.front().body_length());
-					std::cout << "write msg header[" << header << "] body [" << body << "]\n";
-						std::cout << "!ec\n";
+					//std::string header = std::string(msg.data(), chat_message::header_length);
+					//std::string body = std::string(obj.write_msgs_.front().body(), obj.write_msgs_.front().body_length());
+					//std::cout << "write msg header[" << header << "] body [" << body << "]\n";
+						//std::cout << "!ec\n";
 					obj.write_msgs_.pop_front();
 					if (!obj.write_msgs_.empty()) {
 						obj.do_write_ssl();
@@ -1812,7 +1831,7 @@ private:
 		);
 	}
 	void do_write(){
-		//std::cout << "do_write()\n";
+		std::cout << "do_write()\n";
 		auto self(shared_from_this());
 		auto msg = write_msgs_.front();
 		boost::asio::async_write(socket_,
@@ -1874,10 +1893,11 @@ private:
 	}
 	void start_shutdown() {
 		std::cout << "shutdown connection\n";
+		std::cout << "erase id" << device_id << "\n";
 		auto self = shared_from_this();
 		shutdown_timer.expires_after(boost::asio::chrono::seconds(10));
 		shutdown_timer.async_wait([weak = std::weak_ptr(self)](const boost::system::error_code& ec) {
-			if (auto self = weak.lock()) {
+			if (auto self = weak.lock()) {			
 				self->do_shutdown(*self, self);
 			}
 			});

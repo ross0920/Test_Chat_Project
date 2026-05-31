@@ -56,6 +56,7 @@ public:
 	virtual bool get_feedback_option() { return false; };
 	virtual void set_feedback_option(bool val) {};
 	virtual void update_client_endpoint(boost::asio::ip::udp::endpoint ep) {};
+	virtual std::string get_device_id() { return ""; };
 	virtual std::chrono::steady_clock::time_point get_current_timepoint() {
 			return std::chrono::steady_clock::now();
 	};
