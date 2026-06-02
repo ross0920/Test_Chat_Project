@@ -2034,9 +2034,9 @@ private:
 				boost::asio::placeholders::bytes_transferred));
 	}
 	void handle_receive(/*udp::endpoint& remote_endpoint,*/ std::shared_ptr<voice_chat_message> recv_vc_msg_, const boost::system::error_code& error,
-		std::size_t) {
+		std::size_t packet_size) {
 		if (!error) {
-			if (recv_vc_msg_->decode_header()                                                                   ) {
+			if (recv_vc_msg_->decode_header(packet_size)                                                                   ) {
 				std::string client_ip = udp_remote_endpoint_.address().to_string();
 				unsigned short client_port = udp_remote_endpoint_.port();
 				std::string key = client_ip + " : " + std::to_string(client_port);

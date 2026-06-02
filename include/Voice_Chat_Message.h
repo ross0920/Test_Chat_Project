@@ -70,10 +70,19 @@ public:
 		std::memcpy(ptr, &body_length_, sizeof(body_length_));
 		//std::cout << "wrote body length\n";
 	}
-	bool decode_header() {
-		if (header_length > sizeof(data_)) { return false; }
+	bool decode_header(size_t packet_size) {
+		if (packet_size < 1) { 
+			return false; }
+		if (header_length > sizeof(data_)) { 
+			return 	false; }
 		token_len = data_[0];
+		if (token_len > 16) { 
+			return false; }
+		size_t min_header = 1 + token_len + 3 + 2;
+		if (packet_size < min_header) { 
+			return false; }
 		token.assign(reinterpret_cast<char*>(data_ + 1), token_length);
+		
 		room_id = (data_)[token_length + 1];
 		sender_id = data_[token_length + 2];
 		keep_alive = data_[token_length + 3];
@@ -81,6 +90,8 @@ public:
 			static_cast<uint16_t>((data_)[token_length + 5]) << 8;
 		if (body_length_ > max_body_length) { 
 			body_length_ = 0;
+			return false; }
+		if (packet_size < min_header + body_length_) { 
 			return false; }
 		return true;
 	}

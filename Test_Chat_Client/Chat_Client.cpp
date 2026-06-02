@@ -275,7 +275,8 @@ public:
 	OpusDecoder* decoder;
 	ma_linear_resampler resampler;
 	ma_linear_resampler_config resampler_cfg;
-
+	std::vector<float> last_frame_data{};
+	int last_frame_frames{};
 	rbs(ma_device& capture_device, ma_device& playback_device) : size{},
 		decoder{ nullptr }, resampler{}
 	{
@@ -284,7 +285,7 @@ public:
 		resampler_cfg = ma_linear_resampler_config_init(NETWORK_FORMAT, NETWORK_CHANNELS,
 			SAMPLE_RATE, playback_device.sampleRate);
 		ma_linear_resampler_init(&resampler_cfg, nullptr, &resampler);
-
+		last_frame_data.resize(FRAME_SIZE * NETWORK_CHANNELS);
 	}
 	void initialize_decoder() {
 		int error = 0;
@@ -657,6 +658,12 @@ public:
 	std::string session_token;//16 bytes/chars
 	std::shared_ptr<boost::asio::steady_timer> send_timer_;
 	bool stop_playback = false;
+	int vc_partner_count = 0;
+
+	void stop_udp_heartbeat_ping() {
+		udp_heartbeat_timer_.cancel();
+	}
+
 	void check_close_socket() {
 		if (!audio_ctx.running_capture && !audio_ctx.running_playback) {
 			boost::system::error_code ec;
@@ -876,7 +883,7 @@ public:
 					return;
 				}
 				if (!ec) {
-					if (!read_vc_msg_->decode_header()) {
+					if (!read_vc_msg_->decode_header(bytes)) {
 						boost::asio::post(io_context_, [self] {
 							self->check_and_read_header_test();
 							});		
@@ -951,6 +958,33 @@ private:
 			//std::cout << "NETWORK READ fail: decoded_frames <= 0\n";
 			return;
 		}
+
+		ma_uint32 frames = ma_pcm_rb_available_read(&stream.playback_rb);
+		double buffer_ms = ((double)frames / (double)SAMPLE_RATE) * 1000.0;
+
+		// Drift correction thresholds
+		const double target_ms = 40.0;
+		const double high_ms = 60.0;
+		const double low_ms = 20.0;
+		//std::cout << "buffer_ms = " << buffer_ms << "\n";
+
+		if (buffer_ms > high_ms) {
+			//std::cout << "buffer_ms > high_ms\n";
+			//std::cout << "buffer_ms = " << buffer_ms << "\n";
+			return;
+		}
+		/*else if (buffer_ms < low_ms) {
+			// Duplicate last frame (push it again)
+			void* out;
+			ma_uint32 requested = stream.last_frame_frames;
+			ma_result r = ma_pcm_rb_acquire_write(&stream.playback_rb, &requested, &out);
+			if (r == MA_SUCCESS) {
+				ma_copy_pcm_frames(out, stream.last_frame_data.data(), requested, NETWORK_FORMAT, NETWORK_CHANNELS);
+				ma_pcm_rb_commit_write(&stream.playback_rb, requested);
+			}
+			return;
+		}*/
+
 		/*if (decoded_frames < FRAME_SIZE) {
 			std::memset(pcm_out.data() + decoded_frames, 0, (FRAME_SIZE - decoded_frames) * sizeof(float));
 			decoded_frames = FRAME_SIZE;
@@ -999,6 +1033,10 @@ private:
 		//std::memcpy(pOut, pcm_out.data(), bytes_to_write);
 		std::memcpy(pOut, out_buffer.data(), bytes_to_write);
 		ma_pcm_rb_commit_write(&stream.playback_rb, frames_written);
+
+		stream.last_frame_frames = decoded_frames;
+		std::memcpy(stream.last_frame_data.data(), pcm_out.data(), decoded_frames);
+
 		//std::cout << "NETWORK READ: commit frames_written = " << frames_written << "\n";
 	}
 
@@ -1141,6 +1179,7 @@ void udp_heartbeat_ping() {
 	);
 	udp_heartbeat_timer_.expires_after(std::chrono::seconds(5));
 	udp_heartbeat_timer_.async_wait([this](const boost::system::error_code& ec) {
+		if (ec == boost::asio::error::operation_aborted) { return; }
 		udp_heartbeat_ping();
 		});
 
@@ -1795,6 +1834,7 @@ private:
 void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
 	if (pDevice == nullptr) { return; }
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
+	if (!ctx->running_playback) { return; }
 	const ma_uint32 out_ch = pDevice->playback.channels;
 	const ma_uint32 total_samples = frameCount * out_ch;
 	float* out = (float*)pFramesOut;
@@ -1846,6 +1886,7 @@ void playback_callback(ma_device* pDevice, void* pFramesOut, const void* pFrames
 void capture_callback(ma_device* pDevice, void* pFramesOut, const void* pFramesIn, ma_uint32 frameCount) {
 	if (pDevice == nullptr || pFramesIn == nullptr) { return; }
 	auto* ctx = static_cast<Audio_Context*>(pDevice->pUserData);
+	if (!ctx->running_capture) { return; }
 
 	const uint32_t in_ch = pDevice->capture.channels;
 	const uint32_t out_ch = NETWORK_CHANNELS;
@@ -2145,6 +2186,18 @@ void draw_chat_window(std::shared_ptr<chat_client>& c, GLFWwindow* window) {
 			msg.encode_header();
 			c->write_ssl(msg);
 			iter->second.ps = participant_state::sending_vc_request;
+			if (enable_vc == 1) {
+				c->vc_partner_count++;
+			}
+			else if (enable_vc == 0) {
+				c->vc_partner_count--;
+				c->vc_partner_count = std::min(0, c->vc_partner_count);
+				if (c->vc_partner_count == 0) {
+					c->audio_ctx.stop_capture();
+					c->audio_ctx.stop_playback();
+					c->stop_udp_heartbeat_ping();
+				}
+			}
 		}
 		if (iter->second.enable_vc.first == 1) {
 			ImGui::SliderFloat("Vol", &iter->second.output_volume, 0.0f, 3.0f, "##%.04f");
